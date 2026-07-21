@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>grblHAL Studio — CAM &amp; Contrôleur CNC</title>
+<meta name="description" content="Studio CAM et interface contrôleur pour grblHAL : compensation de rayon d'outil, calcul vitesses/avances, contrôle des pièces et pilotage Web Serial." />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230c1016'/%3E%3Ccircle cx='16' cy='16' r='8' fill='none' stroke='%23f5b043' stroke-width='2.4'/%3E%3Ccircle cx='16' cy='16' r='2.4' fill='%234cc9f0'/%3E%3C/svg%3E" />
+<link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+
+<!-- ===== SVG icon set (no emoji) ===== -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-plug" viewBox="0 0 24 24"><path d="M9 2v6M15 2v6M7 8h10v3a5 5 0 0 1-10 0V8zM12 16v6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 5l12 7-12 7V5z" fill="currentColor"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><path d="M7 5h4v14H7zM13 5h4v14h-4z" fill="currentColor"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor"/></symbol>
+  <symbol id="i-reset" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 1 2.3 5.6M4 20v-5h5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 11l8-7 8 7M6 10v9h12v-9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8 10V7a4 4 0 0 1 8 0" fill="none" stroke="currentColor" stroke-width="1.8"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M5 7h14M9 7V5h6v2M7 7l1 13h8l1-13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-fit" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="i-comp" viewBox="0 0 24 24"><circle cx="9" cy="12" r="6" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M15 6v12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-dasharray="3 2"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 13l4 4 10-11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 5l7 7M12 5l-7 7M12 5v14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+</svg>
+
+<!-- ===== Top bar ===== -->
+<header class="topbar">
+  <div class="brand">
+    <svg class="logo" viewBox="0 0 32 32"><circle cx="16" cy="16" r="9" fill="none" stroke="#f5b043" stroke-width="2.4"/><circle cx="16" cy="16" r="2.6" fill="#4cc9f0"/><path d="M16 3v4M16 25v4M3 16h4M25 16h4" stroke="#4cc9f0" stroke-width="2" stroke-linecap="round"/></svg>
+    <div><b>grblHAL</b> <span>Studio</span></div>
+  </div>
+
+  <nav class="menu" id="menu">
+    <div class="menu-item" data-menu="file">File
+      <div class="dropdown">
+        <button data-act="open-gcode">Ouvrir G-code…</button>
+        <button data-act="save-gcode">Enregistrer G-code</button>
+        <hr><button data-act="export-tools">Exporter outils (JSON)</button>
+        <button data-act="import-tools">Importer outils…</button>
+      </div>
+    </div>
+    <div class="menu-item" data-menu="edit">Edit
+      <div class="dropdown">
+        <button data-act="clear-gcode">Effacer G-code</button>
+        <button data-act="clear-comp">Annuler compensation</button>
+      </div>
+    </div>
+    <div class="menu-item" data-menu="settings">Settings
+      <div class="dropdown">
+        <button data-act="set-rpm">RPM max broche…</button>
+        <button data-act="set-tol">Tolérance contrôle…</button>
+        <button data-act="set-cutz">Z de coupe / Z sûr…</button>
+      </div>
+    </div>
+    <div class="menu-item" data-menu="tools">Tools
+      <div class="dropdown">
+        <button data-act="add-tool">Ajouter un outil</button>
+        <button data-act="push-tools">Pousser la table → grblHAL</button>
+        <button data-act="reset-tools">Réinitialiser la table</button>
+      </div>
+    </div>
+    <div class="menu-item" data-menu="codes">Codes
+      <div class="dropdown">
+        <button data-act="ins-G0">G0 — rapide</button>
+        <button data-act="ins-G1">G1 — linéaire</button>
+        <button data-act="ins-G2">G2/G3 — arc</button>
+        <button data-act="ins-G43">G43 H — longueur</button>
+        <button data-act="ins-M3">M3/M5 — broche</button>
+      </div>
+    </div>
+  </nav>
+
+  <div class="strategy" role="tablist" aria-label="Stratégie d'usinage">
+    <button class="strat-tab" data-strat="ebauche" role="tab">Ébauche</button>
+    <button class="strat-tab is-active" data-strat="semifinition" role="tab">Semi-finition</button>
+    <button class="strat-tab" data-strat="finition" role="tab">Finition</button>
+  </div>
+
+  <div class="conn">
+    <span class="status-dot" id="connDot"></span>
+    <span class="status-text" id="connState">Déconnecté</span>
+    <button class="btn btn-conn" id="btnConnect"><svg class="ic"><use href="#i-plug"/></svg> Connecter</button>
+  </div>
+</header>
+
+<!-- ===== Cockpit ===== -->
+<main class="cockpit">
+
+  <!-- LEFT: tools + feeds -->
+  <aside class="col col-left">
+    <section class="panel">
+      <div class="panel-h"><h2>Table d'outils</h2><button class="icon-btn" id="btnAddTool" title="Ajouter"><svg class="ic"><use href="#i-plus"/></svg></button></div>
+      <div class="tool-list" id="toolList"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-h"><h2>Réglage d'outil</h2><span class="pill" id="toolIdPill">T—</span></div>
+      <div class="tool-editor" id="toolEditor">
+        <div class="field span2"><label>Désignation</label><input id="tName" type="text" /></div>
+        <div class="field"><label>Type</label>
+          <select id="tType"></select>
+        </div>
+        <div class="field"><label>Matière outil</label>
+          <select id="tMat"><option value="CARBIDE">Carbure</option><option value="HSS">ARS / HSS</option></select>
+        </div>
+        <div class="field"><label>Ø nominal <i>mm</i></label><input id="tDia" type="number" step="0.001" /></div>
+        <div class="field"><label>Dents (z)</label><input id="tFlutes" type="number" step="1" min="1" /></div>
+        <div class="field"><label>R géométrie <i>mm</i></label><input id="tRadGeom" type="number" step="0.001" /></div>
+        <div class="field wear"><label>R usure <i>± mm</i></label><input id="tRadWear" type="number" step="0.001" /></div>
+        <div class="field"><label>L géométrie <i>mm</i></label><input id="tLenGeom" type="number" step="0.001" /></div>
+        <div class="field wear"><label>L usure <i>± mm</i></label><input id="tLenWear" type="number" step="0.001" /></div>
+        <div class="eff span2" id="tEff"></div>
+        <div class="row span2">
+          <button class="btn btn-primary" id="btnSaveTool"><svg class="ic"><use href="#i-check"/></svg> Enregistrer</button>
+          <button class="btn" id="btnPushTools"><svg class="ic"><use href="#i-up"/></svg> Pousser table</button>
+          <button class="btn btn-ghost danger" id="btnDeleteTool"><svg class="ic"><use href="#i-trash"/></svg></button>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-h"><h2>Vitesses &amp; avances</h2><span class="pill" id="stratPill">Semi-finition</span></div>
+      <div class="feeds">
+        <div class="field span2"><label>Matière usinée</label><select id="fMaterial"></select></div>
+        <div class="field"><label>RPM max broche</label><input id="fRpmMax" type="number" step="100" value="24000" /></div>
+        <div class="field"><label>fz manuel <i>mm, opt.</i></label><input id="fFzOverride" type="number" step="0.001" placeholder="auto" /></div>
+        <div class="calc-grid" id="feedsOut"></div>
+        <div class="formula">N = 1000·Vc / (π·d)&nbsp;&nbsp;·&nbsp;&nbsp;Vf = fz·z·N</div>
+      </div>
+    </section>
+  </aside>
+
+  <!-- CENTER: viz + inspection -->
+  <section class="col col-center">
+    <div class="viz-toolbar">
+      <button class="btn sm" id="btnFit"><svg class="ic"><use href="#i-fit"/></svg> Ajuster</button>
+      <span class="sep"></span>
+      <label class="inline">Outil comp
+        <select id="compTool" class="mini"></select>
+      </label>
+      <label class="inline">Côté
+        <select id="compSide" class="mini">
+          <option value="outside">Extérieur (profil)</option>
+          <option value="inside">Intérieur (poche)</option>
+        </select>
+      </label>
+      <button class="btn sm btn-primary" id="btnComp"><svg class="ic"><use href="#i-comp"/></svg> Compenser</button>
+      <span class="sep"></span>
+      <button class="btn sm" id="btnSim"><svg class="ic"><use href="#i-play"/></svg> Simuler</button>
+      <button class="btn sm" id="btnInspect"><svg class="ic"><use href="#i-check"/></svg> Contrôler</button>
+      <span class="grow"></span>
+      <span class="legend"><i class="dot dot-part"></i>pièce <i class="dot dot-tool"></i>trajectoire <i class="dot dot-mach"></i>usiné <i class="dot dot-rapid"></i>rapide</span>
+    </div>
+    <div class="viz-wrap">
+      <canvas id="view"></canvas>
+      <div class="viz-badge" id="vizBadge">Charge un G-code ou une géométrie de démonstration</div>
+    </div>
+    <div class="inspect-bar" id="inspectBar">
+      <div class="insp-title">Contrôle des pièces</div>
+      <div class="insp-body" id="inspectOut"><span class="muted">Lance « Compenser » puis « Contrôler » pour vérifier les cotes.</span></div>
+    </div>
+  </section>
+
+  <!-- RIGHT: machine control + console -->
+  <aside class="col col-right">
+    <section class="panel estop-panel">
+      <button class="estop" id="estop" title="Arrêt d'urgence (soft-reset)">
+        <span class="estop-ring"></span><span class="estop-label">STOP</span>
+      </button>
+      <div class="run-row">
+        <button class="btn run start" id="btnStart" title="Cycle start / reprise"><svg class="ic"><use href="#i-play"/></svg></button>
+        <button class="btn run hold" id="btnHold" title="Feed hold"><svg class="ic"><use href="#i-pause"/></svg></button>
+        <button class="btn run reset" id="btnReset" title="Soft reset"><svg class="ic"><use href="#i-reset"/></svg></button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-h"><h2>Position</h2><span class="pill mono" id="mcState">—</span></div>
+      <div class="dro" id="dro">
+        <div class="dro-row"><span class="ax">X</span><span class="val" id="droX">0.000</span><button class="z0" data-zero="X">0</button></div>
+        <div class="dro-row"><span class="ax">Y</span><span class="val" id="droY">0.000</span><button class="z0" data-zero="Y">0</button></div>
+        <div class="dro-row"><span class="ax">Z</span><span class="val" id="droZ">0.000</span><button class="z0" data-zero="Z">0</button></div>
+      </div>
+      <div class="fs-row"><span>F <b id="droF">0</b></span><span>S <b id="droS">0</b></span>
+        <button class="btn xs" id="btnHome"><svg class="ic"><use href="#i-home"/></svg> Home</button>
+        <button class="btn xs" id="btnUnlock"><svg class="ic"><use href="#i-lock"/></svg> Unlock</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-h"><h2>Jog</h2>
+        <select id="jogStep" class="mini">
+          <option>0.1</option><option selected>1</option><option>5</option><option>10</option><option>50</option>
+        </select>
+      </div>
+      <div class="jogpad">
+        <button class="jog" data-jog="Y+" style="grid-area:yp">Y+</button>
+        <button class="jog" data-jog="X-" style="grid-area:xm">X−</button>
+        <button class="jog home" data-jog="0" style="grid-area:c">⌂</button>
+        <button class="jog" data-jog="X+" style="grid-area:xp">X+</button>
+        <button class="jog" data-jog="Y-" style="grid-area:ym">Y−</button>
+        <button class="jog" data-jog="Z+" style="grid-area:zp">Z+</button>
+        <button class="jog" data-jog="Z-" style="grid-area:zm">Z−</button>
+      </div>
+    </section>
+
+    <section class="panel console-panel">
+      <div class="panel-h"><h2>Console</h2></div>
+      <div class="console" id="console"></div>
+      <form class="cmd" id="cmdForm"><input id="cmdLine" type="text" placeholder="$$  ·  G0 X0  ·  ?" autocomplete="off" /><button class="btn xs">↵</button></form>
+    </section>
+  </aside>
+</main>
+
+<!-- ===== G-code bar ===== -->
+<footer class="gcode-bar">
+  <div class="gc-head">
+    <h2>G-code</h2>
+    <div class="gc-actions">
+      <button class="btn xs" id="btnLoadDemo">Géométrie démo</button>
+      <button class="btn xs" id="btnGenerate">Générer depuis comp.</button>
+      <button class="btn xs" id="btnOpenFile">Ouvrir…</button>
+      <span class="grow"></span>
+      <span class="stream-prog" id="streamProg"></span>
+      <button class="btn xs btn-primary" id="btnStream"><svg class="ic"><use href="#i-up"/></svg> Envoyer à la machine</button>
+    </div>
+  </div>
+  <textarea id="gcode" spellcheck="false" placeholder="; Colle ou charge ton programme G-code ici, ou clique « Géométrie démo »."></textarea>
+</footer>
+
+<input type="file" id="fileInput" accept=".nc,.gcode,.txt,.tap,.cnc" hidden />
+<input type="file" id="fileTools" accept=".json" hidden />
+
+<script src="/vendor/clipper.js"></script>
+<script type="module" src="/js/app.js"></script>
+</body>
+</html>
