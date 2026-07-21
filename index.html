@@ -25,6 +25,8 @@
   <symbol id="i-comp" viewBox="0 0 24 24"><circle cx="9" cy="12" r="6" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M15 6v12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-dasharray="3 2"/></symbol>
   <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 13l4 4 10-11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 5l7 7M12 5l-7 7M12 5v14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-table" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M3 9h18M3 14h18M9 4v16M15 4v16" stroke="currentColor" stroke-width="1.4"/></symbol>
+  <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/></symbol>
 </svg>
 
 <!-- ===== Top bar ===== -->
@@ -58,8 +60,9 @@
     </div>
     <div class="menu-item" data-menu="tools">Tools
       <div class="dropdown">
+        <button data-act="open-tooltable">Table de correction d'outil…</button>
         <button data-act="add-tool">Ajouter un outil</button>
-        <button data-act="push-tools">Pousser la table → grblHAL</button>
+        <hr><button data-act="push-tools">Pousser la table → grblHAL</button>
         <button data-act="reset-tools">Réinitialiser la table</button>
       </div>
     </div>
@@ -93,8 +96,14 @@
   <!-- LEFT: tools + feeds -->
   <aside class="col col-left">
     <section class="panel">
-      <div class="panel-h"><h2>Table d'outils</h2><button class="icon-btn" id="btnAddTool" title="Ajouter"><svg class="ic"><use href="#i-plus"/></svg></button></div>
+      <div class="panel-h"><h2>Table d'outils</h2>
+        <div class="ph-actions">
+          <button class="icon-btn" id="btnOpenTable" title="Table de correction d'outil (éditable)"><svg class="ic"><use href="#i-table"/></svg></button>
+          <button class="icon-btn" id="btnAddTool" title="Ajouter"><svg class="ic"><use href="#i-plus"/></svg></button>
+        </div>
+      </div>
       <div class="tool-list" id="toolList"></div>
+      <button class="btn xs full mt6" id="btnOpenTable2"><svg class="ic"><use href="#i-table"/></svg> Ouvrir la table de correction</button>
     </section>
 
     <section class="panel">
@@ -234,6 +243,100 @@
 
 <input type="file" id="fileInput" accept=".nc,.gcode,.txt,.tap,.cnc" hidden />
 <input type="file" id="fileTools" accept=".json" hidden />
+
+<!-- ===== Tool-correction table modal (gmoccapy-style editable grid) ===== -->
+<div class="modal-back" id="ttBack" hidden>
+  <div class="modal modal-wide" role="dialog" aria-label="Table de correction d'outil">
+    <header class="modal-head">
+      <div class="mh-title"><svg class="ic"><use href="#i-table"/></svg><h2>Correction d'outil — table</h2></div>
+      <div class="seg" id="ttMode" title="Fraisage : Z + rayon. Tournage : ajoute X (Ø) + direction de pointe.">
+        <button data-mode="mill" class="is-active">Fraisage</button>
+        <button data-mode="lathe">Tournage</button>
+      </div>
+      <span class="grow"></span>
+      <span class="mh-hint">Édite un nombre → il est pris en compte immédiatement. « Appliquer » pousse la table à grblHAL.</span>
+      <button class="modal-x" id="ttClose" title="Fermer">✕</button>
+    </header>
+    <div class="modal-body">
+      <div class="tt-scroll"><table class="tt" id="ttTable"></table></div>
+    </div>
+    <footer class="modal-foot">
+      <div class="foot-group">
+        <button class="btn sm" id="ttAdd"><svg class="ic"><use href="#i-plus"/></svg> Ajouter</button>
+        <button class="btn sm btn-ghost danger" id="ttDel"><svg class="ic"><use href="#i-trash"/></svg> Supprimer</button>
+        <button class="btn sm" id="ttReload">Recharger</button>
+      </div>
+      <div class="foot-group touch" id="ttTouch">
+        <span class="fg-label"><svg class="ic"><use href="#i-target"/></svg> Palpage (outil actif)</span>
+        <button class="btn sm" id="ttGrabZ" title="Mesure face Z — capture la position machine Z courante comme longueur d'outil">Mesure face Z</button>
+        <button class="btn sm" id="ttGrabX" title="Mesure Ø X — saisis le diamètre mesuré au micromètre (tour)">Mesure Ø X…</button>
+      </div>
+      <span class="grow"></span>
+      <div class="lathe-hint" id="ttLatheHint" hidden>X en Ø · pointe → Q · <code>G10 L1 P X Z R Q</code></div>
+      <button class="btn btn-primary" id="ttApply"><svg class="ic"><use href="#i-up"/></svg> Appliquer → grblHAL</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ===== Tip-direction picker (Fanuc/Haas nose orientation 0–9) ===== -->
+<div class="modal-back sm" id="tipBack" hidden>
+  <div class="tip-pop" role="dialog" aria-label="Direction de pointe">
+    <div class="tip-head">Direction de pointe d'outil</div>
+    <div class="tip-grid" id="tipGrid"></div>
+    <div class="tip-legend">Position du nez d'outil imaginaire · centre = sur l'axe (foret / fraise)</div>
+  </div>
+</div>
+
+<!-- ===== Connection dialog (ioSender-style) ===== -->
+<div class="modal-back" id="connBack" hidden>
+  <div class="modal modal-conn" role="dialog" aria-label="Connexion">
+    <header class="modal-head">
+      <div class="mh-title"><svg class="ic"><use href="#i-plug"/></svg><h2>Connexion — grblHAL</h2></div>
+      <span class="grow"></span>
+      <button class="modal-x" id="connClose" title="Fermer">✕</button>
+    </header>
+    <div class="modal-body conn-body">
+      <div class="seg tabs" id="connTabs">
+        <button data-tab="serial" class="is-active">Série</button>
+        <button data-tab="network">Réseau</button>
+      </div>
+
+      <div class="conn-pane" data-pane="serial">
+        <div class="crow"><label>Port</label>
+          <div class="port-line">
+            <select id="connPort" class="mini wide"><option value="prompt">— choisir à la connexion (navigateur) —</option></select>
+            <button class="btn xs" id="connScan" title="Lister les ports déjà autorisés">Actualiser</button>
+          </div>
+        </div>
+        <div class="crow"><label>Baud rate</label>
+          <select id="connBaud" class="mini">
+            <option>250000</option><option selected>115200</option><option>57600</option>
+            <option>38400</option><option>19200</option><option>9600</option>
+          </select>
+        </div>
+        <div class="crow"><label>On connect</label>
+          <select id="connOnConnect" class="mini">
+            <option value="none" selected>No action</option>
+            <option value="status">Interroger l'état (?)</option>
+            <option value="unlock">Déverrouiller ($X)</option>
+            <option value="home">Prise d'origine ($H)</option>
+          </select>
+        </div>
+        <p class="conn-note">Web Serial : le navigateur affiche son propre sélecteur de port natif (COM…) à la connexion. Chrome / Edge requis, sur <code>localhost</code>.</p>
+      </div>
+
+      <div class="conn-pane" data-pane="network" hidden>
+        <div class="crow"><label>Hôte</label><input id="connHost" class="mini wide" type="text" placeholder="192.168.5.1" /></div>
+        <div class="crow"><label>Port</label><input id="connTcp" class="mini" type="number" value="23" /></div>
+        <p class="conn-note warn">Le transport réseau (Telnet/WebSocket) n'est pas exposé par l'API Web Serial du navigateur. Utilise l'onglet <b>Série</b> via USB, ou un pont série→réseau. Cet onglet est indicatif.</p>
+      </div>
+    </div>
+    <footer class="modal-foot center">
+      <button class="btn" id="connCancel">Annuler</button>
+      <button class="btn btn-primary" id="connOk"><svg class="ic"><use href="#i-plug"/></svg> Ok — connecter</button>
+    </footer>
+  </div>
+</div>
 
 <script src="/vendor/clipper.js"></script>
 <script type="module" src="/js/app.js"></script>

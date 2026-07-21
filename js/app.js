@@ -1,11 +1,12 @@
 // app.js — wires the cockpit together.
 import { MATERIALS, STRATEGY } from './materials.js';
-import { TOOL_TYPES, loadTools, saveTools, mkTool, effRadius, effDia, effLength, toolToG10, nextToolId } from './tools.js';
+import { TOOL_TYPES, TIP_DIRS, loadTools, saveTools, mkTool, effRadius, effDia, effLength, toolToG10, nextToolId } from './tools.js';
 import { computeCutting } from './feeds.js';
 import { parseGcode, compensate, polysToGcode, demoContour, polyBounds } from './geometry.js';
 import { inspect } from './inspect.js';
 import { Viz } from './viz.js';
 import { grbl } from './grbl.js';
+import { ToolTable } from './tooltable.js';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
@@ -26,6 +27,7 @@ const state = {
 };
 
 let viz;
+let toolTable;
 
 // ---------- init ----------
 window.addEventListener('DOMContentLoaded', () => {
@@ -41,9 +43,76 @@ window.addEventListener('DOMContentLoaded', () => {
   bindViz();
   bindGcode();
   bindMachine();
+  initToolTable();
+  bindConnDialog();
   loadDemo();
   logSys('Prêt. Connecte la machine (Chrome/Edge) ou explore la CAO.');
 });
+
+// ---------- correction table (editable grid) ----------
+function initToolTable() {
+  toolTable = new ToolTable({
+    back: $('#ttBack'),
+    table: $('#ttTable'),
+    modeBtns: $$('#ttMode button'),
+    latheHint: $('#ttLatheHint'),
+    tipPicker: { back: $('#tipBack'), grid: $('#tipGrid') },
+    controls: {
+      add: $('#ttAdd'), del: $('#ttDel'), reload: $('#ttReload'), apply: $('#ttApply'),
+      grabZ: $('#ttGrabZ'), grabX: $('#ttGrabX'), close: $('#ttClose'),
+    },
+    deps: {
+      getTools: () => state.tools,
+      setTools: (t) => { state.tools = t; },
+      persist: () => saveTools(state.tools),
+      getActiveId: () => state.activeId,
+      setActiveId: (id) => { state.activeId = id; },
+      getDRO: () => (grbl.connected ? droVec() : null),
+      onApply: applyTable,
+      onChanged: syncFromTable,
+      log: (m, cls) => logSys(m, cls),
+    },
+  });
+  $('#btnOpenTable').addEventListener('click', () => toolTable.open());
+  $('#btnOpenTable2').addEventListener('click', () => toolTable.open());
+}
+
+// Table edited a tool → keep the left cockpit (list, editor, comp select, feeds) in sync.
+function syncFromTable(id) {
+  renderToolList();
+  refreshCompToolSelect();
+  if (id === state.activeId) {
+    const t = state.tools.find((x) => x.id === id);
+    if (t) {
+      $('#toolIdPill').textContent = 'T' + id;
+      $('#tName').value = t.name; $('#tType').value = t.type; $('#tMat').value = t.material;
+      $('#tDia').value = t.dia; $('#tFlutes').value = t.flutes;
+      $('#tRadGeom').value = t.radiusGeom; $('#tRadWear').value = t.radiusWear;
+      $('#tLenGeom').value = t.lenGeom; $('#tLenWear').value = t.lenWear;
+      updateEff(); computeFeeds();
+    }
+  }
+}
+
+// "Appliquer" — declare the whole table in grblHAL (G10 L1), or preview if offline.
+function applyTable(tools, mode) {
+  const lines = tools.map(toolToG10);
+  if (grbl.connected) {
+    for (const l of lines) grbl.send(l);
+    grbl.emit('line', { line: `; ${tools.length} outils appliqués (${mode}) → table grblHAL` });
+    logSys(`${tools.length} outils appliqués → grblHAL (G10 L1, ${mode}).`, 'ok');
+  } else {
+    $('#gcode').value = ['; Table de correction d\'outil — G10 L1 (' + mode + ')', ...lines, ''].join('\n');
+    logSys(`Hors ligne : ${tools.length} lignes G10 L1 générées dans l'éditeur G-code.`, 'sys');
+  }
+  flash($('#ttApply'));
+}
+
+function droVec() {
+  const s = grbl.state;
+  const p = s.wpos && s.wpos.some(Boolean) ? s.wpos : s.mpos;
+  return { x: p[0] || 0, y: p[1] || 0, z: p[2] || 0 };
+}
 
 // ---------- selects ----------
 function populateSelects() {
@@ -125,17 +194,19 @@ function bindTools() {
   $('#btnPushTools').addEventListener('click', pushTools);
 }
 
+function refreshTableIfOpen() { if (toolTable && toolTable.isOpen()) toolTable.render(); }
+
 function addTool() {
   const id = nextToolId(state.tools);
   const t = mkTool({ id, name: `Outil ${id}`, dia: 6, lenGeom: 45, flutes: 2 });
   state.tools.push(t); saveTools(state.tools);
-  selectTool(id); logSys(`Outil T${id} ajouté.`);
+  selectTool(id); refreshTableIfOpen(); logSys(`Outil T${id} ajouté.`);
 }
 function deleteTool() {
   if (state.tools.length <= 1) return logSys('Au moins un outil requis.');
   state.tools = state.tools.filter((t) => t.id !== state.activeId);
   saveTools(state.tools);
-  selectTool(state.tools[0].id);
+  selectTool(state.tools[0].id); refreshTableIfOpen();
 }
 function pushTools() {
   if (!grbl.connected) return logSys('Connecte la machine pour pousser la table.', 'err');
@@ -317,8 +388,62 @@ function bindMachine() {
 
 async function toggleConnect() {
   if (grbl.connected) { await grbl.disconnect(); return; }
-  try { setConn('busy', 'Connexion…'); await grbl.connect(); logSys('Port série ouvert (115200).', 'ok'); }
-  catch (err) { setConn('err', 'Échec'); logSys('Connexion : ' + err.message, 'err'); }
+  openConnDialog();
+}
+
+// ---------- connection dialog (ioSender-style) ----------
+let _connPorts = [];
+function bindConnDialog() {
+  $('#connClose').addEventListener('click', closeConnDialog);
+  $('#connCancel').addEventListener('click', closeConnDialog);
+  $('#connBack').addEventListener('mousedown', (e) => { if (e.target === $('#connBack')) closeConnDialog(); });
+  $('#connScan').addEventListener('click', scanPorts);
+  $('#connOk').addEventListener('click', doConnect);
+  $$('#connTabs button').forEach((b) => b.addEventListener('click', () => {
+    $$('#connTabs button').forEach((x) => x.classList.toggle('is-active', x === b));
+    $$('.conn-pane').forEach((p) => (p.hidden = p.dataset.pane !== b.dataset.tab));
+  }));
+}
+function openConnDialog() { $('#connBack').hidden = false; scanPorts(); }
+function closeConnDialog() { $('#connBack').hidden = true; }
+
+async function scanPorts() {
+  const sel = $('#connPort');
+  _connPorts = await grbl.listPorts();
+  const opts = ['<option value="prompt">— choisir à la connexion (navigateur) —</option>'];
+  _connPorts.forEach((p, i) => {
+    let label = `Port autorisé ${i + 1}`;
+    try { const info = p.getInfo?.(); if (info && info.usbVendorId != null) label += ` · USB ${hex4(info.usbVendorId)}:${hex4(info.usbProductId)}`; } catch (_) {}
+    opts.push(`<option value="${i}">${label}</option>`);
+  });
+  sel.innerHTML = opts.join('');
+}
+function hex4(n) { return (n ?? 0).toString(16).padStart(4, '0').toUpperCase(); }
+
+async function doConnect() {
+  const activeTab = $('#connTabs .is-active')?.dataset.tab;
+  if (activeTab === 'network') { logSys('Réseau non disponible via Web Serial — utilise l\'onglet Série.', 'err'); return; }
+  const baud = parseInt($('#connBaud').value, 10) || 115200;
+  const portSel = $('#connPort').value;
+  const onConn = $('#connOnConnect').value;
+  const port = portSel !== 'prompt' ? _connPorts[+portSel] : null;
+  closeConnDialog();
+  try {
+    setConn('busy', 'Connexion…');
+    await grbl.connect(baud, port);
+    logSys(`Port série ouvert (${baud} bauds).`, 'ok');
+    if (onConn && onConn !== 'none') setTimeout(() => runOnConnect(onConn), 400);
+  } catch (err) {
+    setConn('err', 'Échec');
+    logSys('Connexion : ' + err.message, 'err');
+  }
+}
+function runOnConnect(action) {
+  switch (action) {
+    case 'status': grbl.realtime('?'); break;
+    case 'unlock': grbl.unlock(); logSys('On connect → déverrouillage ($X).', 'sys'); break;
+    case 'home': grbl.home(); logSys('On connect → prise d\'origine ($H).', 'sys'); break;
+  }
 }
 function setConn(cls, txt) {
   $('#connDot').className = 'status-dot ' + cls;
@@ -369,9 +494,10 @@ function menuAct(act) {
     case 'set-rpm': ask('RPM max broche', state.rpmMax, (v) => { state.rpmMax = +v || state.rpmMax; $('#fRpmMax').value = state.rpmMax; computeFeeds(); }); break;
     case 'set-tol': ask('Tolérance de contrôle (mm)', state.tol, (v) => { state.tol = +v || state.tol; }); break;
     case 'set-cutz': ask('Z de coupe (mm)', state.cutZ, (v) => { state.cutZ = parseFloat(v); }); break;
+    case 'open-tooltable': toolTable.open(); break;
     case 'add-tool': addTool(); break;
     case 'push-tools': pushTools(); break;
-    case 'reset-tools': localStorage.removeItem('grblhal-studio.tools.v1'); state.tools = loadTools(); selectTool(state.tools[0].id); renderToolList(); refreshCompToolSelect(); break;
+    case 'reset-tools': localStorage.removeItem('grblhal-studio.tools.v1'); state.tools = loadTools(); selectTool(state.tools[0].id); renderToolList(); refreshCompToolSelect(); refreshTableIfOpen(); break;
     case 'ins-G0': insG('G0 X0 Y0'); break;
     case 'ins-G1': insG('G1 X0 Y0 F600'); break;
     case 'ins-G2': insG('G2 X0 Y0 I0 J0 F600'); break;
@@ -380,7 +506,7 @@ function menuAct(act) {
   }
 }
 function insG(t) { const ta = $('#gcode'); ta.value += (ta.value.endsWith('\n') || !ta.value ? '' : '\n') + t + '\n'; }
-$('#fileTools')?.addEventListener?.('change', (e) => { const file = e.target.files[0]; if (!file) return; const r = new FileReader(); r.onload = () => { try { state.tools = JSON.parse(r.result).map(mkTool); saveTools(state.tools); selectTool(state.tools[0].id); renderToolList(); refreshCompToolSelect(); logSys('Outils importés.', 'ok'); } catch (_) { logSys('JSON outils invalide.', 'err'); } }; r.readAsText(file); e.target.value = ''; });
+$('#fileTools')?.addEventListener?.('change', (e) => { const file = e.target.files[0]; if (!file) return; const r = new FileReader(); r.onload = () => { try { state.tools = JSON.parse(r.result).map(mkTool); saveTools(state.tools); selectTool(state.tools[0].id); renderToolList(); refreshCompToolSelect(); refreshTableIfOpen(); logSys('Outils importés.', 'ok'); } catch (_) { logSys('JSON outils invalide.', 'err'); } }; r.readAsText(file); e.target.value = ''; });
 
 // ---------- helpers ----------
 function activeTool() { return state.tools.find((x) => x.id === state.activeId) || state.tools[0]; }
