@@ -15,7 +15,8 @@ grblHAL gère nativement la **correction de longueur** d'outil (`G43 H`, palpage
 
 | Domaine | Détail |
 |---|---|
-| **Table de correction d'outil** | Grille **éditable** (style gmoccapy/LinuxCNC) : on change chaque nombre en place — T# / poche / Ø / R nez (géométrie + **usure**) / décalage **X en Ø** / longueur Z (géométrie + **usure**) / **direction de pointe 0–9** / dents / désignation. Bascule **Fraisage / Tournage**. « Appliquer » pousse toute la table en `G10 L1` (mill : `P Z R` ; tour : `P X Z R Q`). Palpage : *Mesure face Z* (capture la position machine Z) et *Mesure Ø X* (saisie micromètre) — le geste exact du tip Haas. |
+| **Table de correction d'outil** | Grille **éditable** (style gmoccapy/LinuxCNC) : on change chaque nombre en place — T# / poche / Ø / R nez (géométrie + **usure**) / décalage **X en Ø** / longueur Z (géométrie + **usure**) / **direction de pointe 0–9** / dents / désignation. Bascule **Fraisage / Tournage**. « Appliquer » pousse toute la table en `G10 L1` (mill : `P Z R` ; tour : `P X Z R Q`). Palpage : *Mesure face Z* (capture la position machine Z) et *Mesure Ø X* (saisie micromètre) — le geste exact du tip Haas. **Exporter / Importer** toute la table déclarée en **CSV** (ou JSON). |
+| **Apparence** | Thème clair « bureau classique » (gris/blanc, à plat) calqué sur ioSender et gmoccapy — pas de mode sombre. |
 | **Vitesses & avances** | `N = 1000·Vc/(π·d)`, `Vf = fz·z·N`, base de données matières (ARS/HSS vs carbure), bridage RPM max, ap/ae par stratégie **ébauche / semi-finition / finition**. |
 | **Compensation de rayon** | Offset robuste (Clipper) intérieur/extérieur, coins convexes = arcs / concaves = rognage, détection de gouge. Le **rayon de nez** de la table pilote directement cette compensation (un R faux = chanfreins qui disparaissent, cf. tip Haas). |
 | **Contrôle des pièces** | Reconstruit la paroi usinée depuis la trajectoire, compare aux cotes nominales, verdict tolérance. |
