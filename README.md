@@ -3,7 +3,10 @@
 **CAM + interface contrôleur pour machines CNC pilotées par grblHAL.**
 Le PC prend en charge ce que le microcontrôleur ne peut pas faire : la **compensation de rayon d'outil** (les « courbures », G41/G42 résolues côté PC), le **calcul des vitesses & avances**, le **contrôle des pièces**, et une **interface de pilotage** via Web Serial.
 
-![port](https://img.shields.io/badge/localhost-9107-f5b043) ![stack](https://img.shields.io/badge/stack-Node%20%2B%20vanilla%20JS-4cc9f0)
+### ▶ Démo en ligne : **https://thefhiter.github.io/grblhal-studio/**
+> À ouvrir dans **Chrome ou Edge**. La CAO (import DXF, compensation, poches, vitesses, contrôle) fonctionne partout ; le **pilotage machine** (Web Serial) exige un contexte sécurisé — la page HTTPS de GitHub Pages convient.
+
+![pages](https://img.shields.io/badge/démo-github.io-1668c0) ![stack](https://img.shields.io/badge/stack-Node%20%2B%20vanilla%20JS-4cc9f0)
 
 ---
 
