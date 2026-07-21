@@ -95,11 +95,88 @@ export function sideFromGcode(code, contour) {
   return 'outside';
 }
 
+// ---- G41/G42 resolution (the job grblHAL can't do) ------------------------
+// Offset an OPEN polyline to one side by `radius` — this is true cutter comp:
+// the tool centre runs left (G41) or right (G42) of the programmed edge. Convex
+// corners get a tool-radius arc; concave corners self-intersect (trim).
+export function offsetOpenPath(pts, radius, side) {
+  const s = side === 'left' ? 1 : -1;
+  const P = [];
+  for (const p of pts) { const l = P[P.length - 1]; if (!l || Math.abs(l.x - p.x) > 1e-6 || Math.abs(l.y - p.y) > 1e-6) P.push(p); }
+  if (P.length < 2 || radius <= 0) return P.slice();
+
+  const segs = [];
+  for (let i = 0; i < P.length - 1; i++) {
+    const a = P[i], b = P[i + 1];
+    const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy);
+    if (len < 1e-9) continue;
+    const nx = s * (-dy / len) * radius, ny = s * (dx / len) * radius;
+    segs.push({ a: { x: a.x + nx, y: a.y + ny }, b: { x: b.x + nx, y: b.y + ny }, dir: { x: dx / len, y: dy / len }, v: a });
+  }
+  if (!segs.length) return P.slice();
+
+  const out = [segs[0].a];
+  for (let i = 1; i < segs.length; i++) {
+    const prev = segs[i - 1], cur = segs[i], vertex = P[i];
+    const cross = prev.dir.x * cur.dir.y - prev.dir.y * cur.dir.x;
+    const convex = s * cross < 0;
+    if (convex && Math.abs(cross) > 1e-6) {
+      out.push(prev.b);
+      let a0 = Math.atan2(prev.b.y - vertex.y, prev.b.x - vertex.x);
+      let a1 = Math.atan2(cur.a.y - vertex.y, cur.a.x - vertex.x);
+      let sweep = a1 - a0;
+      while (sweep <= -Math.PI) sweep += 2 * Math.PI;
+      while (sweep > Math.PI) sweep -= 2 * Math.PI;
+      const steps = Math.max(1, Math.ceil(Math.abs(sweep) / 0.25));
+      for (let k = 1; k < steps; k++) { const a = a0 + (sweep * k) / steps; out.push({ x: vertex.x + radius * Math.cos(a), y: vertex.y + radius * Math.sin(a) }); }
+      out.push(cur.a);
+    } else {
+      const ip = lineIntersect(prev.a, prev.b, cur.a, cur.b);
+      if (ip && Math.hypot(ip.x - vertex.x, ip.y - vertex.y) < radius * 4) out.push(ip);
+      else { out.push(prev.b); out.push(cur.a); }
+    }
+  }
+  out.push(segs[segs.length - 1].b);
+  return out;
+}
+
+function lineIntersect(p1, p2, p3, p4) {
+  const d = (p2.x - p1.x) * (p4.y - p3.y) - (p2.y - p1.y) * (p4.x - p3.x);
+  if (Math.abs(d) < 1e-9) return null;
+  const t = ((p3.x - p1.x) * (p4.y - p3.y) - (p3.y - p1.y) * (p4.x - p3.x)) / d;
+  return { x: p1.x + t * (p2.x - p1.x), y: p1.y + t * (p2.y - p1.y) };
+}
+
+// Read a whole program, find each G41/G42…G40 region, offset it by the tool
+// radius, and tag it interior/exterior from its winding. Returns everything
+// needed to *show the correction*.
+export function resolveCutterComp(text, radius) {
+  const { moves } = parseGcode(text);
+  const raw = [];
+  let cur = null;
+  for (const m of moves) {
+    const active = m.comp === 'left' || m.comp === 'right';
+    if (active) {
+      if (!cur || cur.side !== m.comp) { if (cur) raw.push(cur); cur = { side: m.comp, dReg: m.dReg, pts: [{ x: m.from.x, y: m.from.y }] }; }
+      for (let i = 1; i < m.poly.length; i++) cur.pts.push(m.poly[i]);
+    } else if (cur) { raw.push(cur); cur = null; }
+  }
+  if (cur) raw.push(cur);
+
+  const regions = raw.filter((r) => r.pts.length >= 2).map((r) => {
+    const compensated = offsetOpenPath(r.pts, radius, r.side);
+    const interior = sideFromGcode(r.side === 'left' ? 'G41' : 'G42', r.pts);   // 'inside' | 'outside'
+    return { side: r.side, code: r.side === 'left' ? 'G41' : 'G42', dReg: r.dReg, programmed: r.pts, compensated, interior };
+  });
+  return { radius, regions, count: regions.length };
+}
+
 // ---- G-code parsing -------------------------------------------------------
 // Produces display moves (rapid vs cut) with flattened geometry, plus bounds.
 export function parseGcode(text) {
   const moves = [];
   let x = 0, y = 0, z = 0, g = 0, abs = true;
+  let comp = 'off', dReg = null;          // cutter comp state: off | left (G41) | right (G42)
   const lines = String(text).split(/\r?\n/);
 
   let srcLine = 0;
@@ -107,17 +184,25 @@ export function parseGcode(text) {
     srcLine++;
     const line = raw.replace(/\(.*?\)/g, '').replace(/;.*$/, '').trim();
     if (!line) continue;
+    // A block can carry several G-codes (e.g. "G01 G41 X.. D03"); collect them all
+    // so a comp code after the motion code doesn't clobber the motion mode.
     const words = line.match(/([A-Za-z])\s*(-?\d*\.?\d+)/g) || [];
-    const w = {};
+    const w = {}; const gs = [];
     for (const tok of words) {
       const letter = tok[0].toUpperCase();
       const val = parseFloat(tok.slice(1));
-      if (letter === 'G') { w.G = val; }
+      if (letter === 'G') gs.push(val);
       else w[letter] = val;
     }
-    if (w.G === 90) abs = true;
-    if (w.G === 91) abs = false;
-    if (w.G != null && [0, 1, 2, 3].includes(w.G)) g = w.G;
+    for (const gv of gs) {
+      if (gv === 90) abs = true;
+      else if (gv === 91) abs = false;
+      else if (gv === 0 || gv === 1 || gv === 2 || gv === 3) g = gv;
+      else if (gv === 40) comp = 'off';
+      else if (gv === 41) comp = 'left';
+      else if (gv === 42) comp = 'right';
+    }
+    if (w.D != null) dReg = w.D;
 
     const nx = w.X != null ? (abs ? w.X : x + w.X) : x;
     const ny = w.Y != null ? (abs ? w.Y : y + w.Y) : y;
@@ -128,9 +213,9 @@ export function parseGcode(text) {
       if (g === 2 || g === 3) {
         const cx = x + (w.I || 0), cy = y + (w.J || 0);
         const poly = flattenArc(x, y, nx, ny, cx, cy, g === 2);
-        moves.push({ rapid: false, kind: 'arc', from: { x, y, z }, to: { x: nx, y: ny, z: nz }, poly, srcLine });
+        moves.push({ rapid: false, kind: 'arc', from: { x, y, z }, to: { x: nx, y: ny, z: nz }, poly, srcLine, comp, dReg });
       } else {
-        moves.push({ rapid: g === 0, kind: 'line', from: { x, y, z }, to: { x: nx, y: ny, z: nz }, poly: [{ x, y }, { x: nx, y: ny }], srcLine });
+        moves.push({ rapid: g === 0, kind: 'line', from: { x, y, z }, to: { x: nx, y: ny, z: nz }, poly: [{ x, y }, { x: nx, y: ny }], srcLine, comp, dReg });
       }
     }
     x = nx; y = ny; z = nz;
