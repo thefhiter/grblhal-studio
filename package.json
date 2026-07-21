@@ -1,0 +1,15 @@
+{
+  "name": "grblhal-studio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "grblHAL CAM & Control Studio — PC-side cutter-radius compensation, feeds & speeds, part inspection, and a Web-Serial controller interface for grblHAL CNC machines.",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "clipper-lib": "^6.4.2",
+    "express": "^4.19.2"
+  }
+}
