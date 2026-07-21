@@ -103,3 +103,61 @@ export function toolToG10(t) {
 export function nextToolId(tools) {
   return tools.reduce((m, t) => Math.max(m, t.id), 0) + 1;
 }
+
+// ---- CSV export / import ("extract the full declared table") ----------------
+// ';' delimiter + '.' decimals so it opens cleanly in French Excel.
+export const CSV_COLS = [
+  ['id', 'T#'], ['pocket', 'Poche'], ['name', 'Désignation'], ['type', 'Type'],
+  ['dia', 'Ø nominal'], ['radiusGeom', 'R géométrie'], ['radiusWear', 'R usure'],
+  ['xOffset', 'X (Ø)'], ['lenGeom', 'Z/L géométrie'], ['lenWear', 'L usure'],
+  ['tipDir', 'Direction pointe'], ['flutes', 'Dents'],
+];
+
+export function toolsToCSV(tools) {
+  const head = [...CSV_COLS.map((c) => c[1]), 'R effectif', 'L effectif', 'Ø effectif'];
+  const rows = tools.map((t) => [
+    ...CSV_COLS.map(([k]) => csvCell(t[k])),
+    effRadius(t).toFixed(3), effLength(t).toFixed(3), effDia(t).toFixed(3),
+  ]);
+  return [head, ...rows].map((r) => r.join(';')).join('\r\n');
+}
+
+function csvCell(v) {
+  if (v == null) return '';
+  const s = String(v);
+  return /[;"\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
+export function csvToTools(text) {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim());
+  if (!lines.length) return [];
+  const delim = lines[0].includes(';') ? ';' : ',';
+  const header = splitCsv(lines[0], delim).map((h) => h.trim().toLowerCase());
+  const idx = {};
+  CSV_COLS.forEach(([key, label]) => {
+    const i = header.findIndex((h) => h === label.toLowerCase() || h === key);
+    if (i >= 0) idx[key] = i;
+  });
+  const out = [];
+  for (let li = 1; li < lines.length; li++) {
+    const cells = splitCsv(lines[li], delim);
+    const o = {};
+    for (const [key] of CSV_COLS) if (idx[key] != null) o[key] = cells[idx[key]];
+    if (o.id == null && o.name == null) continue;
+    out.push(mkTool(o));
+  }
+  return out;
+}
+
+function splitCsv(line, delim) {
+  const out = []; let cur = ''; let q = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (q) { if (c === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += c; }
+    else if (c === '"') q = true;
+    else if (c === delim) { out.push(cur); cur = ''; }
+    else cur += c;
+  }
+  out.push(cur);
+  return out;
+}
