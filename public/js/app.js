@@ -2,7 +2,7 @@
 import { MATERIALS, STRATEGY } from './materials.js';
 import { TOOL_TYPES, TIP_DIRS, loadTools, saveTools, mkTool, effRadius, effDia, effLength, toolToG10, nextToolId, toolsToCSV, csvToTools } from './tools.js';
 import { computeCutting } from './feeds.js';
-import { parseGcode, compensate, polysToGcode, demoContour, polyBounds } from './geometry.js';
+import { parseGcode, compensate, pocketClear, polysToGcode, demoContour, polyBounds } from './geometry.js';
 import { inspect } from './inspect.js';
 import { Viz } from './viz.js';
 import { grbl } from './grbl.js';
@@ -346,12 +346,25 @@ function bindViz() {
 }
 
 function runComp() {
-  if (!state.contour.length) return logSys('Aucun profil. Charge la géométrie démo.', 'err');
+  if (!state.contour.length) return logSys('Aucun profil. Charge la géométrie démo ou un DXF.', 'err');
   const id = +$('#compTool').value;
   const t = state.tools.find((x) => x.id === id) || state.tools[0];
   const r = effRadius(t);
   const stock = STRATEGY[state.strategy].stock;
   state.compSide = $('#compSide').value;                 // single source of truth = the control
+
+  if (state.compSide === 'pocket') {
+    const cut = computeCutting({ tool: t, materialKey: state.materialKey, strategy: state.strategy, rpmMax: state.rpmMax });
+    const step = Math.max(0.2, cut.ae || effDia(t) * 0.45);
+    const res = pocketClear(state.contour, r, step, stock);
+    state.toolPaths = res.passes; state.machined = [];
+    viz.setScene({ contour: state.contour, toolPaths: state.toolPaths, machined: [], toolRadius: r });
+    viz.fit(); hideBadge();
+    if (res.gouge) logSys('⚠ Outil plus grand que la poche — évidement impossible.', 'err');
+    else logSys(`Évidement T${id} · R${r.toFixed(3)} · pas ae ${step.toFixed(2)} → ${res.rings} passe(s).`, 'ok');
+    return;
+  }
+
   const res = compensate(state.contour, r, state.compSide, stock);
   state.toolPaths = res.paths;
   state.machined = [];
@@ -373,6 +386,7 @@ function setSimIcon(playing) { $('#btnSim').innerHTML = `<svg class="ic"><use hr
 
 function runInspect() {
   if (!state.toolPaths.length) return logSys('Compense d\'abord un profil.', 'err');
+  if (state.compSide === 'pocket') return logSys('Le contrôle de cote s\'applique au contournage, pas à l\'évidement de poche.', 'sys');
   const id = +$('#compTool').value;
   const t = state.tools.find((x) => x.id === id) || state.tools[0];
   const res = inspect(state.contour, state.toolPaths, effRadius(t), state.compSide, state.tol);

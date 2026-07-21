@@ -61,6 +61,28 @@ export function compensate(contour, radius, side = 'outside', stock = 0) {
   return { paths: result, delta, gouge, radius: r, side };
 }
 
+// Pocket clearing (ébauche) — concentric offset rings that empty the inside of a
+// closed contour. Each ring is offset from the ORIGINAL wall (not the previous
+// ring) so errors don't compound; Clipper naturally splits into multiple loops
+// when a pocket pinches to a waist. Returned centre-out (gentler on the tool).
+//   radius   : effective tool radius
+//   stepover : radial engagement ae between rings (mm)
+//   stock    : finishing allowance left on the wall
+export function pocketClear(contour, radius, stepover, stock = 0) {
+  const step = Math.max(0.1, stepover);
+  const first = Math.max(0, radius) + Math.max(0, stock);   // wall → first ring centre
+  const passes = [];
+  let d = first, guard = 0;
+  while (guard++ < 1000) {
+    const rings = offsetClosed(contour, -d, 'round');        // inward
+    if (!rings.length) break;
+    passes.push(...rings);
+    d += step;
+  }
+  passes.reverse();                                          // innermost first (center-out)
+  return { passes, gouge: passes.length === 0, stepover: step, rings: passes.length };
+}
+
 // Translate G41/G42 + contour winding into an inside/outside intent.
 // G41 = left of travel, G42 = right of travel.
 export function sideFromGcode(code, contour) {
