@@ -29,21 +29,40 @@ function defaultTools() {
 
 export function mkTool(o = {}) {
   const dia = num(o.dia, 6);
+  const id = num(o.id, 1);
   return {
-    id: num(o.id, 1),
+    id,
     name: o.name || `Outil ${o.id ?? ''}`.trim(),
     type: o.type || 'endmill_flat',
     material: o.material || 'CARBIDE',
-    dia,                                   // nominal diameter (mm)
-    radiusGeom: o.radiusGeom != null ? num(o.radiusGeom) : dia / 2, // R géométrie
-    radiusWear: num(o.radiusWear, 0),      // R usure (mm, ±)
-    lenGeom: num(o.lenGeom, 40),           // L géométrie (mm)
-    lenWear: num(o.lenWear, 0),            // L usure (mm, ±)
-    flutes: num(o.flutes, 2),              // nombre de dents
-    fluteLen: num(o.fluteLen, 20),         // longueur coupante
+    pocket: num(o.pocket, id),              // Fach/Platz — poche du magasin/tourelle
+    dia,                                    // nominal diameter (mm)
+    radiusGeom: o.radiusGeom != null ? num(o.radiusGeom) : dia / 2, // R géométrie (nez d'outil)
+    radiusWear: num(o.radiusWear, 0),       // R usure (mm, ±)
+    xOffset: num(o.xOffset, 0),             // décalage X (tour : en Ø) — décalage géométrie
+    lenGeom: num(o.lenGeom, 40),            // L / Z géométrie (mm)
+    lenWear: num(o.lenWear, 0),             // L / Z usure (mm, ±)
+    tipDir: num(o.tipDir, 0),               // direction de pointe 0..9 (tour) — voir TIP_DIRS
+    flutes: num(o.flutes, 2),               // nombre de dents
+    fluteLen: num(o.fluteLen, 20),          // longueur coupante
     note: o.note || '',
   };
 }
+
+// Lathe imaginary tool-nose orientation (Fanuc/Haas standard, verified against the
+// Haas "Set Your Lathe Offsets Manually" tip: OD turning X-Z- = 3, boring bar X+Z- = 2,
+// drill on-centre Z- = 7). Center 0/9 = on-centre (drills, mills). Used for G10 L1 Q.
+export const TIP_DIRS = {
+  0: { label: 'Sur l\'axe',  hint: 'foret / outil centré' },
+  1: { label: 'X+ Z+',       hint: 'arrière-droite' },
+  2: { label: 'X+ Z−',       hint: 'barre d\'alésage' },
+  3: { label: 'X− Z−',       hint: 'outil de tournage ext.' },
+  4: { label: 'X− Z+',       hint: 'avant-droite' },
+  5: { label: 'X+',          hint: 'sur axe, vers +X' },
+  6: { label: 'Z+',          hint: 'sur axe, vers +Z' },
+  7: { label: 'Z−',          hint: 'foret (pointe −Z)' },
+  8: { label: 'X−',          hint: 'sur axe, vers −X' },
+};
 
 // Effective values (what the offset engine and G-code actually use).
 export function effRadius(t) { return t.radiusGeom + t.radiusWear; }
@@ -67,11 +86,18 @@ export function saveTools(tools) {
 
 // Emit the grblHAL command that declares a tool in the controller's tool table.
 // grblHAL applies Z (length) natively via G43 H; R (radius) is stored but used
-// PC-side for compensation.
+// PC-side for radius compensation. On a lathe we also emit the X (diameter) offset
+// and Q (tip orientation) — the two extra columns the Haas video sets by hand.
+//   Mill : G10 L1 P<n> Z<-len> R<rad>
+//   Lathe: G10 L1 P<n> X<xoff> Z<-len> R<rad> Q<tip>
 export function toolToG10(t) {
   const z = (-effLength(t)).toFixed(3);         // TLO is typically negative on Z
   const r = effRadius(t).toFixed(3);
-  return `G10 L1 P${t.id} Z${z} R${r}`;
+  let cmd = `G10 L1 P${t.id}`;
+  if (t.xOffset) cmd += ` X${(+t.xOffset).toFixed(3)}`;
+  cmd += ` Z${z} R${r}`;
+  if (t.tipDir) cmd += ` Q${t.tipDir}`;
+  return cmd;
 }
 
 export function nextToolId(tools) {
