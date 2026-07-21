@@ -2,7 +2,7 @@
 import { MATERIALS, STRATEGY } from './materials.js';
 import { TOOL_TYPES, TIP_DIRS, loadTools, saveTools, mkTool, effRadius, effDia, effLength, toolToG10, nextToolId, toolsToCSV, csvToTools } from './tools.js';
 import { computeCutting } from './feeds.js';
-import { parseGcode, compensate, pocketClear, polysToGcode, demoContour, polyBounds } from './geometry.js';
+import { parseGcode, compensate, pocketClear, polysToGcode, demoContour, polyBounds, pathLength } from './geometry.js';
 import { inspect } from './inspect.js';
 import { Viz } from './viz.js';
 import { grbl } from './grbl.js';
@@ -26,6 +26,7 @@ const state = {
   toolPaths: [],         // compensated tool-centre polys
   rapids: [],
   machined: [],
+  parsedMoves: [],       // moves from the live G-code editor (for cursor highlight)
   compSide: 'outside',
   wcs: loadWcs(),
   wcsActiveP: 1,
@@ -413,6 +414,76 @@ function bindGcode() {
   $('#btnImportDxf').addEventListener('click', () => $('#fileDxf').click());
   $('#fileDxf').addEventListener('change', openDxf);
   $('#btnStream').addEventListener('click', streamGcode);
+
+  // live editor — parse & render as you type, ncviewer-style
+  const ed = $('#gcode');
+  ed.addEventListener('input', () => { refreshGutter(); clearTimeout(traceTimer); traceTimer = setTimeout(liveTrace, 130); });
+  ed.addEventListener('scroll', () => { $('#gcGutter').scrollTop = ed.scrollTop; });
+  ['keyup', 'click', 'select'].forEach((ev) => ed.addEventListener(ev, cursorHighlight));
+  refreshGutter();
+}
+
+// ---------- live G-code editor ----------
+let traceTimer = null;
+let hadPaths = false;
+
+// Parse the editor text and render its toolpath directly (no import needed).
+function liveTrace() {
+  const p = parseGcode($('#gcode').value);
+  state.parsedMoves = p.moves;
+  const cuts = p.moves.filter((m) => !m.rapid).map((m) => m.poly);
+  const rapids = p.moves.filter((m) => m.rapid).map((m) => m.poly);
+  state.toolPaths = cuts; state.rapids = rapids;
+  state.contour = []; state.contours = []; state.machined = [];   // editor is the source of truth
+  const hasPaths = cuts.length + rapids.length > 0;
+  viz.setScene({ contour: [], contours: [], toolPaths: cuts, rapids, machined: [], highlight: null });
+  if (hasPaths && !hadPaths) viz.fit();                           // auto-fit on first content / fresh paste
+  hadPaths = hasPaths;
+  if (hasPaths) hideBadge();
+  editorStats(p);
+  cursorHighlight();
+}
+
+// Refresh parsed moves + stats + gutter after a programmatic load (demo, DXF, generate),
+// without disturbing the scene those functions already set.
+function metaRefresh() {
+  const p = parseGcode($('#gcode').value);
+  state.parsedMoves = p.moves;
+  hadPaths = p.moves.length > 0;
+  editorStats(p);
+  refreshGutter();
+}
+
+function editorStats(p) {
+  const nLines = $('#gcode').value.split('\n').length;
+  const cuts = p.moves.filter((m) => !m.rapid).map((m) => m.poly);
+  const b = p.bounds;
+  const len = pathLength(cuts);
+  $('#gcStats').textContent = `${nLines} ligne${nLines > 1 ? 's' : ''} · ${p.moves.length} mvt · ${b.w.toFixed(1)}×${b.h.toFixed(1)} mm · coupe ${len.toFixed(0)} mm`;
+}
+
+function currentLine() {
+  const ed = $('#gcode');
+  return ed.value.slice(0, ed.selectionStart).split('\n').length;   // 1-based
+}
+
+function refreshGutter() {
+  const ed = $('#gcode');
+  const n = ed.value.split('\n').length;
+  const cur = currentLine();
+  const rows = [];
+  for (let i = 1; i <= n; i++) rows.push(i === cur ? `<span class="cur">${i}</span>` : String(i));
+  const g = $('#gcGutter');
+  g.innerHTML = rows.join('\n');
+  g.scrollTop = ed.scrollTop;
+}
+
+// Highlight the move produced by the line under the cursor, in the viewport.
+function cursorHighlight() {
+  refreshGutter();
+  const cur = currentLine();
+  const mv = (state.parsedMoves || []).find((m) => m.srcLine === cur);
+  viz.setScene({ highlight: mv ? mv.poly : null });
 }
 
 // Import a real 2D profile from a DXF and load it as the nominal contour.
@@ -430,6 +501,7 @@ function openDxf(e) {
       viz.setScene({ contour: main, contours: polylines, toolPaths: [], machined: [], rapids: [], toolRadius: effRadius(activeTool()) });
       viz.fit(); hideBadge();
       $('#gcode').value = profileGcode(main);
+      metaRefresh();
       $('#inspectOut').innerHTML = `<span class="muted">DXF chargé : ${count} profil(s), cadre ${bounds.w.toFixed(1)} × ${bounds.h.toFixed(1)} mm. Le plus grand contour est compensable.</span>`;
       logSys(`DXF « ${file.name} » : ${count} profil(s), ${bounds.w.toFixed(1)}×${bounds.h.toFixed(1)} mm.`, 'ok');
     } catch (err) { logSys('DXF illisible : ' + (err.message || err), 'err'); }
@@ -445,6 +517,7 @@ function loadDemo() {
   viz.setScene({ contour: state.contour, contours: [], toolPaths: [], rapids: [], machined: [], toolRadius: effRadius(activeTool()) });
   viz.fit(); hideBadge();
   $('#gcode').value = profileGcode(state.contour);
+  metaRefresh();
   $('#inspectOut').innerHTML = `<span class="muted">Profil chargé : ${b.w.toFixed(1)} × ${b.h.toFixed(1)} mm. Lance « Compenser » puis « Contrôler ».</span>`;
   logSys('Géométrie démo chargée (équerre 70×50).');
 }
@@ -461,6 +534,7 @@ function generateGcode() {
   const t = activeTool();
   const r = computeCutting({ tool: t, materialKey: state.materialKey, strategy: state.strategy, rpmMax: state.rpmMax });
   $('#gcode').value = polysToGcode(state.toolPaths, { feed: r.vf, plunge: state.plunge, safeZ: state.safeZ, cutZ: state.cutZ, rpm: r.n });
+  metaRefresh();
   logSys('G-code généré depuis la trajectoire compensée.', 'ok');
 }
 
@@ -477,8 +551,11 @@ function traceGcode(text) {
   const cuts = p.moves.filter((m) => !m.rapid).map((m) => m.poly);
   const rapids = p.moves.filter((m) => m.rapid).map((m) => m.poly);
   state.toolPaths = cuts; state.rapids = rapids;
-  viz.setScene({ toolPaths: cuts, rapids, contour: state.contour, machined: [] });
+  state.contour = []; state.contours = []; state.machined = [];
+  state.parsedMoves = p.moves; hadPaths = p.moves.length > 0;
+  viz.setScene({ toolPaths: cuts, rapids, contour: [], contours: [], machined: [], highlight: null });
   viz.fit(); hideBadge();
+  editorStats(p); refreshGutter();
 }
 
 function streamGcode() {

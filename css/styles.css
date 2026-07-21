@@ -196,11 +196,18 @@ input,select,textarea{font-family:inherit}
 /* ===== g-code bar ===== */
 .gcode-bar{height:var(--gcode-h);flex:none;background:var(--bg2);border-top:1px solid var(--border);display:flex;flex-direction:column;padding:8px 12px 10px}
 .gc-head{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.gc-stats{font-family:var(--mono);font-size:10.5px;color:var(--faint);white-space:nowrap}
 .gc-actions{display:flex;align-items:center;gap:6px;flex:1}
 .gc-actions .grow{flex:1}
 .stream-prog{font-family:var(--mono);font-size:11px;color:var(--amber2)}
-#gcode{flex:1;resize:none;background:#fbfbfb;border:1px solid var(--border);border-radius:var(--r-sm);color:#1e1e1e;
+.editor{flex:1;display:flex;min-height:0;background:#fbfbfb;border:1px solid var(--border);border-radius:var(--r-sm);overflow:hidden}
+.gutter{flex:none;width:46px;padding:8px 6px 8px 0;text-align:right;overflow:hidden;
+  font-family:var(--mono);font-size:12px;line-height:1.5;color:#a3a3a3;background:#eef0f2;
+  border-right:1px solid var(--border);white-space:pre;user-select:none}
+.gutter .cur{color:var(--amber2);font-weight:700}
+#gcode{flex:1;resize:none;background:transparent;border:0;color:#1e1e1e;
   font-family:var(--mono);font-size:12px;line-height:1.5;padding:8px 10px;white-space:pre;overflow:auto}
+#gcode:focus{outline:none}
 
 /* ===== panel header actions + small utils ===== */
 .grow{flex:1}

@@ -7,7 +7,7 @@ export class Viz {
     this.cv = canvas;
     this.ctx = canvas.getContext('2d');
     this.scale = 4; this.ox = 0; this.oy = 0;     // world→screen
-    this.scene = { contour: [], contours: [], toolPaths: [], rapids: [], machined: [], toolRadius: 3 };
+    this.scene = { contour: [], contours: [], toolPaths: [], rapids: [], machined: [], highlight: null, toolRadius: 3 };
     this.sim = null;                               // {polys, seg, t, playing, pos}
     this.dpr = Math.max(1, window.devicePixelRatio || 1);
     this._bindPointer();
@@ -67,6 +67,15 @@ export class Viz {
     if (this.scene.contour && this.scene.contour.length) this._polys([this.scene.contour], { color: '#1668c0', width: 2, close: true });
     // tool-centre compensated path
     this._polys(this.scene.toolPaths, { color: '#d9770b', width: 2, close: true });
+    // highlighted move (line under the editor cursor)
+    if (this.scene.highlight && this.scene.highlight.length) {
+      this._polys([this.scene.highlight], { color: '#e0143c', width: 3.5 });
+      const a = this.W2S(this.scene.highlight[0]);
+      const b = this.W2S(this.scene.highlight[this.scene.highlight.length - 1]);
+      ctx.fillStyle = '#e0143c';
+      ctx.beginPath(); ctx.arc(a.x, a.y, 3 * this.dpr, 0, 7); ctx.fill();
+      ctx.beginPath(); ctx.arc(b.x, b.y, 3 * this.dpr, 0, 7); ctx.fill();
+    }
     // tool marker
     if (this.sim && this.sim.pos) this._tool(this.sim.pos);
     ctx.restore();
