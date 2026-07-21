@@ -2,7 +2,7 @@
 import { MATERIALS, STRATEGY } from './materials.js';
 import { TOOL_TYPES, TIP_DIRS, loadTools, saveTools, mkTool, effRadius, effDia, effLength, toolToG10, nextToolId, toolsToCSV, csvToTools } from './tools.js';
 import { computeCutting } from './feeds.js';
-import { parseGcode, compensate, pocketClear, polysToGcode, demoContour, polyBounds, pathLength } from './geometry.js';
+import { parseGcode, compensate, pocketClear, resolveCutterComp, polysToGcode, demoContour, polyBounds, pathLength } from './geometry.js';
 import { inspect } from './inspect.js';
 import { Viz } from './viz.js';
 import { grbl } from './grbl.js';
@@ -27,6 +27,7 @@ const state = {
   rapids: [],
   machined: [],
   parsedMoves: [],       // moves from the live G-code editor (for cursor highlight)
+  compResult: null,      // resolved G41/G42 regions (from the editor)
   compSide: 'outside',
   wcs: loadWcs(),
   wcsActiveP: 1,
@@ -129,6 +130,16 @@ function droVec() {
   const s = grbl.state;
   const p = s.wpos && s.wpos.some(Boolean) ? s.wpos : s.mpos;
   return { x: p[0] || 0, y: p[1] || 0, z: p[2] || 0 };
+}
+
+// Load the bundled G41/G42 example and resolve it live.
+async function loadSampleComp() {
+  try {
+    const text = await (await fetch('samples/1001.nc')).text();
+    $('#gcode').value = text;
+    hadPaths = false; liveTrace();
+    logSys('Exemple 1001.nc chargé — G41/G42 résolu en direct.', 'ok');
+  } catch (err) { logSys('Impossible de charger l\'exemple : ' + (err.message || err), 'err'); }
 }
 
 // ---------- work offsets (G54–G59) ----------
@@ -428,20 +439,57 @@ let traceTimer = null;
 let hadPaths = false;
 
 // Parse the editor text and render its toolpath directly (no import needed).
+// If the program uses G41/G42, resolve the compensation and show the correction.
 function liveTrace() {
-  const p = parseGcode($('#gcode').value);
+  const text = $('#gcode').value;
+  const p = parseGcode(text);
   state.parsedMoves = p.moves;
-  const cuts = p.moves.filter((m) => !m.rapid).map((m) => m.poly);
-  const rapids = p.moves.filter((m) => m.rapid).map((m) => m.poly);
-  state.toolPaths = cuts; state.rapids = rapids;
-  state.contour = []; state.contours = []; state.machined = [];   // editor is the source of truth
-  const hasPaths = cuts.length + rapids.length > 0;
-  viz.setScene({ contour: [], contours: [], toolPaths: cuts, rapids, machined: [], highlight: null });
-  if (hasPaths && !hadPaths) viz.fit();                           // auto-fit on first content / fresh paste
+  const hasComp = p.moves.some((m) => m.comp && m.comp !== 'off');
+  const hasPaths = p.moves.length > 0;
+
+  if (hasComp) {
+    const radius = compRadiusFromText(text);
+    const res = resolveCutterComp(text, radius);
+    state.compResult = res;
+    state.contours = res.regions.map((r) => r.programmed);      // programmed part edge (blue)
+    state.toolPaths = res.regions.map((r) => r.compensated);    // resolved tool centre (orange)
+    state.contour = []; state.rapids = []; state.machined = [];
+    viz.setScene({ contour: [], contours: state.contours, toolPaths: state.toolPaths, rapids: [], machined: [], highlight: null });
+    showCompResult(res);
+  } else {
+    state.compResult = null;
+    const cuts = p.moves.filter((m) => !m.rapid).map((m) => m.poly);
+    const rapids = p.moves.filter((m) => m.rapid).map((m) => m.poly);
+    state.toolPaths = cuts; state.rapids = rapids;
+    state.contour = []; state.contours = []; state.machined = [];
+    viz.setScene({ contour: [], contours: [], toolPaths: cuts, rapids, machined: [], highlight: null });
+  }
+  if (hasPaths && !hadPaths) viz.fit();                          // auto-fit on first content / fresh paste
   hadPaths = hasPaths;
   if (hasPaths) hideBadge();
   editorStats(p);
   cursorHighlight();
+}
+
+// Comp radius: prefer a "D=<diameter>" hint in the program header, else the active tool.
+function compRadiusFromText(text) {
+  const m = text.match(/\bD\s*=\s*([0-9]*\.?[0-9]+)/i);
+  if (m) return parseFloat(m[1]) / 2;
+  return effRadius(activeTool());
+}
+
+// Show the resolved G41/G42 correction + interior/exterior in the inspect bar.
+function showCompResult(res) {
+  if (!res.count) { $('#inspectOut').innerHTML = '<span class="muted">G41/G42 présent mais aucune région exploitable.</span>'; return; }
+  const nIn = res.regions.filter((r) => r.interior === 'inside').length;
+  const nOut = res.regions.filter((r) => r.interior === 'outside').length;
+  const rows = res.regions.map((r, i) => {
+    const label = r.interior === 'inside' ? 'INTÉRIEUR' : 'EXTÉRIEUR';
+    return `<div class="cell"><span class="k">Région ${i + 1} · ${r.code}${r.dReg != null ? ' D' + r.dReg : ''}</span><span class="v ${r.interior === 'inside' ? 'io-in' : 'io-out'}">${label}</span></div>`;
+  }).join('');
+  $('#inspectOut').innerHTML =
+    `<span class="insp-verdict pass"><svg class="ic"><use href="#i-comp"/></svg>G41/G42 résolu · ${res.count} région(s) · R ${res.radius.toFixed(3)} mm</span>
+     <div class="insp-tbl">${rows}<div class="cell"><span class="k">Bilan</span><span class="v">${nIn} int · ${nOut} ext</span></div></div>`;
 }
 
 // Refresh parsed moves + stats + gutter after a programmatic load (demo, DXF, generate),
@@ -541,7 +589,12 @@ function generateGcode() {
 function openFile(e) {
   const file = e.target.files[0]; if (!file) return;
   const reader = new FileReader();
-  reader.onload = () => { $('#gcode').value = reader.result; traceGcode(reader.result); logSys(`Chargé : ${file.name}`); };
+  reader.onload = () => {
+    $('#gcode').value = reader.result;
+    hadPaths = false; liveTrace();                 // comp-aware render + auto-fit
+    const r = state.compResult;
+    logSys(r && r.count ? `Chargé : ${file.name} — G41/G42 résolu (${r.count} région(s)).` : `Chargé : ${file.name}`, r && r.count ? 'ok' : 'sys');
+  };
   reader.readAsText(file);
   e.target.value = '';
 }
@@ -689,6 +742,7 @@ function bindMenus() {
 function menuAct(act) {
   switch (act) {
     case 'import-dxf': $('#fileDxf').click(); break;
+    case 'load-sample-comp': loadSampleComp(); break;
     case 'open-gcode': $('#fileInput').click(); break;
     case 'save-gcode': download('program.nc', $('#gcode').value); break;
     case 'export-tools': download('tools.json', JSON.stringify(state.tools, null, 2)); break;

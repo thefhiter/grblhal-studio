@@ -151,6 +151,8 @@ input,select,textarea{font-family:inherit}
 .insp-tbl .cell{display:flex;flex-direction:column}
 .insp-tbl .cell .k{color:var(--faint);font-size:9.5px}
 .insp-tbl .cell .v{color:var(--ink)}
+.insp-tbl .cell .v.io-in{color:#146a2c;font-weight:700}
+.insp-tbl .cell .v.io-out{color:var(--amber2);font-weight:700}
 .muted{color:var(--faint)}
 
 /* ===== right: machine ===== */
