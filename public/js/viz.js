@@ -7,7 +7,7 @@ export class Viz {
     this.cv = canvas;
     this.ctx = canvas.getContext('2d');
     this.scale = 4; this.ox = 0; this.oy = 0;     // world→screen
-    this.scene = { contour: [], contours: [], toolPaths: [], rapids: [], machined: [], highlight: null, partOutline: null, realPath: null, toolRadius: 3 };
+    this.scene = { contour: [], contours: [], toolPaths: [], rapids: [], machined: [], highlight: null, partOutline: null, realPath: null, comp41: [], comp42: [], showComp: { orig: true, g41: true, g42: true }, toolRadius: 3 };
     this.sim = null;                               // {polys, seg, t, playing, pos}
     this.stock = null;                             // offscreen material buffer
     this.cut = null;                               // cut-simulation state
@@ -71,12 +71,19 @@ export class Viz {
     this._polys(this.scene.rapids, { color: 'rgba(120,120,120,0.55)', width: 1, dash: [6, 5] });
     // machined boundary (inspection)
     if (this.scene.machined && this.scene.machined.length) this._polys(this.scene.machined, { color: 'rgba(23,130,60,0.9)', width: 1.6, close: true });
-    // extra nominal loops (e.g. all DXF profiles / holes)
-    if (this.scene.contours && this.scene.contours.length) this._polys(this.scene.contours, { color: 'rgba(22,104,192,0.5)', width: 1.4, close: true });
-    // nominal contour (the one being compensated)
+    const sc = this.scene.showComp || { orig: true, g41: true, g42: true };
+    const compMode = (this.scene.comp41 && this.scene.comp41.length) || (this.scene.comp42 && this.scene.comp42.length);
+    // original / nominal loops (DXF profiles, or the PROGRAMMED part edge = the path
+    // the tool would follow uncompensated). Toggleable in comp mode.
+    if (this.scene.contours && this.scene.contours.length && (!compMode || sc.orig)) this._polys(this.scene.contours, { color: 'rgba(22,104,192,0.6)', width: 1.5, close: true });
     if (this.scene.contour && this.scene.contour.length) this._polys([this.scene.contour], { color: '#1668c0', width: 2, close: true });
-    // tool-centre compensated path
-    this._polys(this.scene.toolPaths, { color: '#d9770b', width: 2, close: true });
+    if (compMode) {
+      // colour-coded, toggleable compensated tool-centre paths
+      if (sc.g41) this._polys(this.scene.comp41, { color: '#1f8a3b', width: 2.2 });   // G41 = left  → green
+      if (sc.g42) this._polys(this.scene.comp42, { color: '#b0179e', width: 2.2 });   // G42 = right → magenta
+    } else {
+      this._polys(this.scene.toolPaths, { color: '#d9770b', width: 2, close: true });
+    }
     // highlighted move (line under the editor cursor)
     if (this.scene.highlight && this.scene.highlight.length) {
       this._polys([this.scene.highlight], { color: '#e0143c', width: 3.5 });
@@ -234,6 +241,7 @@ export class Viz {
     if (this._raf) cancelAnimationFrame(this._raf);
     this.cut = null; this.stock = null;
     this.scene.realPath = null; this.scene.partOutline = null;
+    this.scene.comp41 = []; this.scene.comp42 = [];
   }
 
   _cutLoop() {
