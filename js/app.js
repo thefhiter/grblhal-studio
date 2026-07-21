@@ -53,6 +53,7 @@ window.addEventListener('DOMContentLoaded', () => {
   initToolTable();
   bindConnDialog();
   initWcs();
+  bindResizers();
   loadDemo();
   logSys('Prêt. Connecte la machine (Chrome/Edge) ou explore la CAO.');
 });
@@ -140,6 +141,67 @@ async function loadSampleComp() {
     hadPaths = false; liveTrace();
     logSys('Exemple 1001.nc chargé — G41/G42 résolu en direct.', 'ok');
   } catch (err) { logSys('Impossible de charger l\'exemple : ' + (err.message || err), 'err'); }
+}
+
+// ---------- resizable panels (splitters) ----------
+const LAYOUT_KEY = 'grblhal-studio.layout.v1';
+function bindResizers() {
+  restoreLayout();
+  if (viz) viz.resize();
+  $$('.splitter, .hsplitter').forEach((sp) => sp.addEventListener('pointerdown', (e) => startResize(e, sp)));
+  window.addEventListener('dblclick', (e) => { const sp = e.target.closest('.splitter,.hsplitter'); if (sp) resetLayout(); });
+}
+function startResize(e, sp) {
+  e.preventDefault();
+  sp.classList.add('drag');
+  try { sp.setPointerCapture(e.pointerId); } catch (_) {}
+  const kind = sp.dataset.resize;
+  const startX = e.clientX, startY = e.clientY;
+  const cs = getComputedStyle(document.documentElement);
+  const s0 = { left: parseFloat(cs.getPropertyValue('--col-left')), right: parseFloat(cs.getPropertyValue('--col-right')), g: parseFloat(cs.getPropertyValue('--gcode-h')) };
+  const root = document.documentElement.style;
+  let raf = 0;
+  const apply = () => {
+    raf = 0;
+    if (viz) viz.resize();
+  };
+  const move = (ev) => {
+    if (kind === 'left') root.setProperty('--col-left', clamp(s0.left + (ev.clientX - startX), 200, window.innerWidth * 0.55) + 'px');
+    else if (kind === 'right') root.setProperty('--col-right', clamp(s0.right - (ev.clientX - startX), 180, window.innerWidth * 0.55) + 'px');
+    else if (kind === 'gcode') root.setProperty('--gcode-h', clamp(s0.g - (ev.clientY - startY), 80, window.innerHeight * 0.75) + 'px');
+    if (!raf) raf = requestAnimationFrame(apply);
+  };
+  const up = () => {
+    sp.classList.remove('drag');
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', up);
+    if (viz) viz.resize();
+    saveLayout();
+  };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', up);
+}
+function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+function saveLayout() {
+  const cs = getComputedStyle(document.documentElement);
+  const L = { l: cs.getPropertyValue('--col-left').trim(), r: cs.getPropertyValue('--col-right').trim(), g: cs.getPropertyValue('--gcode-h').trim() };
+  try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(L)); } catch (_) {}
+}
+function restoreLayout() {
+  try {
+    const L = JSON.parse(localStorage.getItem(LAYOUT_KEY) || 'null'); if (!L) return;
+    const r = document.documentElement.style;
+    if (L.l) r.setProperty('--col-left', L.l);
+    if (L.r) r.setProperty('--col-right', L.r);
+    if (L.g) r.setProperty('--gcode-h', L.g);
+  } catch (_) {}
+}
+function resetLayout() {
+  const r = document.documentElement.style;
+  r.removeProperty('--col-left'); r.removeProperty('--col-right'); r.removeProperty('--gcode-h');
+  try { localStorage.removeItem(LAYOUT_KEY); } catch (_) {}
+  if (viz) viz.resize();
+  logSys('Disposition réinitialisée (double-clic sur une poignée).', 'sys');
 }
 
 // ---------- work offsets (G54–G59) ----------
