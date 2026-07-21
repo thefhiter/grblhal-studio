@@ -27,9 +27,16 @@ export class GrblDriver extends EventTarget {
 
   emit(type, detail) { this.dispatchEvent(new CustomEvent(type, { detail })); }
 
-  async connect(baudRate = 115200) {
+  // List ports the user has already granted access to (no native prompt).
+  async listPorts() {
+    if (!this.supported) return [];
+    try { return await navigator.serial.getPorts(); } catch (e) { return []; }
+  }
+
+  async connect(baudRate = 115200, port = null) {
     if (!this.supported) throw new Error('Web Serial non supporté — utilise Chrome ou Edge.');
-    this.port = await navigator.serial.requestPort();
+    this.port = port || await navigator.serial.requestPort();
+    this.baudRate = baudRate;
     await this.port.open({ baudRate });
     this.writer = this.port.writable.getWriter();
     this.connected = true;
