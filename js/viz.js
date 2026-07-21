@@ -11,6 +11,7 @@ export class Viz {
     this.sim = null;                               // {polys, seg, t, playing, pos}
     this.stock = null;                             // offscreen material buffer
     this.cut = null;                               // cut-simulation state
+    this.editMode = false; this.editHandles = []; this.dragId = null; this.onEdit = null;  // drag-to-edit
     this.dpr = Math.max(1, window.devicePixelRatio || 1);
     this._bindPointer();
     this._raf = null;
@@ -96,7 +97,42 @@ export class Viz {
     // tool marker
     if (this.sim && this.sim.pos) this._tool(this.sim.pos);
     if (this.cut && this.cut.pos) this._cutTool(this.cut.pos, this.cut.radius);
+    if (this.editMode) this._drawHandles();
     ctx.restore();
+  }
+
+  // ---- drag-to-edit ------------------------------------------------------
+  setEdit(on, handles, onEdit) {
+    this.editMode = on;
+    this.editHandles = handles || [];
+    if (onEdit) this.onEdit = onEdit;
+    this.dragId = null;
+    this.cv.style.cursor = on ? 'crosshair' : 'grab';
+    this.draw();
+  }
+  updateHandles(handles) { this.editHandles = handles || []; this.draw(); }
+
+  _drawHandles() {
+    const { ctx } = this;
+    for (const h of this.editHandles) {
+      const p = this.W2S(h);
+      const active = h.id === this.dragId;
+      ctx.beginPath(); ctx.arc(p.x, p.y, (active ? 6.5 : 4.5) * this.dpr, 0, 7);
+      ctx.fillStyle = active ? '#e0143c' : 'rgba(22,104,192,0.92)';
+      ctx.fill();
+      ctx.lineWidth = 1.5 * this.dpr; ctx.strokeStyle = '#fff'; ctx.stroke();
+    }
+  }
+
+  _hitHandle(sx, sy) {
+    const dx = sx * this.dpr, dy = sy * this.dpr;
+    let best = null, bd = 11 * this.dpr;
+    for (const h of this.editHandles) {
+      const p = this.W2S(h);
+      const d = Math.hypot(p.x - dx, p.y - dy);
+      if (d < bd) { bd = d; best = h; }
+    }
+    return best;
   }
 
   _grid() {
@@ -289,13 +325,35 @@ export class Viz {
 
   _bindPointer() {
     let dragging = false, lx = 0, ly = 0;
-    this.cv.addEventListener('pointerdown', (e) => { dragging = true; lx = e.offsetX; ly = e.offsetY; this.cv.setPointerCapture(e.pointerId); });
+    this.cv.addEventListener('pointerdown', (e) => {
+      if (this.editMode) {
+        const h = this._hitHandle(e.offsetX, e.offsetY);
+        if (h) { this.dragId = h.id; try { this.cv.setPointerCapture(e.pointerId); } catch (_) {} this.draw(); return; }
+      }
+      dragging = true; lx = e.offsetX; ly = e.offsetY; try { this.cv.setPointerCapture(e.pointerId); } catch (_) {}
+    });
     this.cv.addEventListener('pointermove', (e) => {
+      if (this.dragId != null) {
+        const w = this.S2W(e.offsetX, e.offsetY);
+        const h = this.editHandles.find((x) => x.id === this.dragId);
+        if (h) { h.x = w.x; h.y = w.y; }
+        if (this.onEdit) this.onEdit(this.dragId, w, 'move');
+        this.draw();
+        return;
+      }
       if (!dragging) return;
       this.ox += (e.offsetX - lx) * this.dpr; this.oy += (e.offsetY - ly) * this.dpr;
       lx = e.offsetX; ly = e.offsetY; this.draw();
     });
-    this.cv.addEventListener('pointerup', (e) => { dragging = false; try { this.cv.releasePointerCapture(e.pointerId); } catch (_) {} });
+    this.cv.addEventListener('pointerup', (e) => {
+      if (this.dragId != null) {
+        const id = this.dragId; this.dragId = null;
+        if (this.onEdit) this.onEdit(id, this.S2W(e.offsetX, e.offsetY), 'commit');
+        try { this.cv.releasePointerCapture(e.pointerId); } catch (_) {}
+        return;
+      }
+      dragging = false; try { this.cv.releasePointerCapture(e.pointerId); } catch (_) {}
+    });
     this.cv.addEventListener('wheel', (e) => {
       e.preventDefault();
       const f = e.deltaY < 0 ? 1.12 : 1 / 1.12;
