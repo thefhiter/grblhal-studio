@@ -29,6 +29,9 @@ const state = {
   parsedMoves: [],       // moves from the live G-code editor (for cursor highlight)
   compResult: null,      // resolved G41/G42 regions (from the editor)
   showComp: { orig: true, g41: true, g42: true },  // G41/G42 display toggles
+  editMode: false,       // drag-to-edit vertices
+  compActive: false,     // a compensation is currently shown (for live re-offset on edit)
+  compRadiusOverride: null,  // user-set comp radius (mm), overrides D= / active tool
   compSide: 'outside',
   wcs: loadWcs(),
   wcsActiveP: 1,
@@ -41,6 +44,7 @@ let toolTable;
 window.addEventListener('DOMContentLoaded', () => {
   if (!window.ClipperLib) console.warn('ClipperLib manquant');
   viz = new Viz($('#view'));
+  window.__viz = viz;                    // debug hook
   populateSelects();
   renderToolList();
   selectTool(state.activeId);
@@ -139,7 +143,7 @@ async function loadSampleComp() {
   try {
     const text = await (await fetch('samples/1001.nc')).text();
     $('#gcode').value = text;
-    hadPaths = false; liveTrace();
+    state.compRadiusOverride = null; hadPaths = false; liveTrace();
     logSys('Exemple 1001.nc chargé — G41/G42 résolu en direct.', 'ok');
   } catch (err) { logSys('Impossible de charger l\'exemple : ' + (err.message || err), 'err'); }
 }
@@ -418,11 +422,18 @@ function bindViz() {
   $('#btnComp').addEventListener('click', runComp);
   $('#btnSim').addEventListener('click', toggleSim);
   $('#btnInspect').addEventListener('click', runInspect);
+  $('#btnEdit').addEventListener('click', toggleEdit);
 
-  // G41/G42 display toggles (checkboxes rendered in the inspect bar)
+  // G41/G42 display toggles + radius control (rendered in the inspect bar)
   $('#inspectOut').addEventListener('change', (e) => {
     const tg = e.target.dataset && e.target.dataset.tg;
     if (!tg) return;
+    if (tg === 'radius') {
+      const v = parseFloat(e.target.value);
+      state.compRadiusOverride = Number.isFinite(v) && v >= 0 ? v : null;
+      liveTrace();
+      return;
+    }
     state.showComp[tg] = e.target.checked;
     viz.scene.showComp = state.showComp;
     viz.draw();
@@ -432,6 +443,7 @@ function bindViz() {
 function runComp() {
   if (!state.contour.length) return logSys('Aucun profil. Charge la géométrie démo ou un DXF.', 'err');
   clearSimUI();
+  state.compActive = true;
   const id = +$('#compTool').value;
   const t = state.tools.find((x) => x.id === id) || state.tools[0];
   const r = effRadius(t);
@@ -591,15 +603,85 @@ function liveTrace() {
   if (hasPaths && !hadPaths) viz.fit();                          // auto-fit on first content / fresh paste
   hadPaths = hasPaths;
   if (hasPaths) hideBadge();
+  state.compActive = false;
+  if (state.editMode) viz.updateHandles(buildHandles());
   editorStats(p);
   cursorHighlight();
 }
 
-// Comp radius: prefer a "D=<diameter>" hint in the program header, else the active tool.
+// Comp radius: a user override wins, else a "D=<diameter>" hint, else the active tool.
 function compRadiusFromText(text) {
+  if (state.compRadiusOverride != null) return state.compRadiusOverride;
   const m = text.match(/\bD\s*=\s*([0-9]*\.?[0-9]+)/i);
   if (m) return parseFloat(m[1]) / 2;
   return effRadius(activeTool());
+}
+
+// ---------- drag-to-edit the geometry ----------
+function toggleEdit() {
+  state.editMode = !state.editMode;
+  $('#btnEdit').classList.toggle('is-on', state.editMode);
+  if (state.editMode) {
+    viz.setEdit(true, buildHandles(), onVertexEdit);
+    logSys('Édition : glisse un point bleu pour déplacer un sommet.', 'sys');
+  } else {
+    viz.setEdit(false, []);
+  }
+}
+
+// Draggable points: G-code straight-move endpoints (edit the text), else contour vertices.
+function buildHandles() {
+  const moves = state.parsedMoves || [];
+  const lineMoves = moves.filter((m) => m.kind === 'line' && !m.rapid && Number.isFinite(m.to.x) && Number.isFinite(m.to.y));
+  if (lineMoves.length) return lineMoves.map((m) => ({ x: m.to.x, y: m.to.y, id: 'L' + m.srcLine }));
+  if (state.contour && state.contour.length) return state.contour.map((p, i) => ({ x: p.x, y: p.y, id: 'C' + i }));
+  return [];
+}
+
+function onVertexEdit(id, pos, phase) {
+  if (id[0] === 'C') {                              // contour vertex — live re-offset
+    const i = +id.slice(1);
+    if (!state.contour[i]) return;
+    state.contour[i] = { x: round3(pos.x), y: round3(pos.y) };
+    if (state.compActive) recompContour(); else viz.setScene({ contour: state.contour, contours: [] });
+    viz.updateHandles(buildHandles());
+    if (phase === 'commit') { $('#gcode').value = profileGcode(state.contour); metaRefresh(); logSys(`Sommet ${i + 1} → (${state.contour[i].x}, ${state.contour[i].y}).`, 'ok'); }
+  } else if (id[0] === 'L') {                       // G-code endpoint — commit on release
+    if (phase !== 'commit') return;
+    setGcodeXY(+id.slice(1), round3(pos.x), round3(pos.y));
+    hadPaths = true; liveTrace();                   // re-parse + re-resolve + redraw
+    viz.setEdit(true, buildHandles(), onVertexEdit); // rebuild handles from the new moves
+    logSys(`Ligne N${id.slice(1)} déplacée → (${round3(pos.x)}, ${round3(pos.y)}).`, 'ok');
+  }
+}
+
+// Re-run the current compensation after a live contour edit (no view re-fit).
+function recompContour() {
+  const t = state.tools.find((x) => x.id === +$('#compTool').value) || state.tools[0];
+  const r = effRadius(t);
+  const side = $('#compSide').value;
+  const stock = STRATEGY[state.strategy].stock;
+  if (side === 'pocket') {
+    const cut = computeCutting({ tool: t, materialKey: state.materialKey, strategy: state.strategy, rpmMax: state.rpmMax });
+    const step = Math.max(0.2, cut.ae || effDia(t) * 0.45);
+    state.toolPaths = pocketClear(state.contour, r, step, stock).passes;
+  } else {
+    state.toolPaths = compensate(state.contour, r, side, stock).paths;
+  }
+  viz.setScene({ contour: state.contour, contours: [], toolPaths: state.toolPaths, toolRadius: r });
+}
+
+// Replace (or add) the X and Y words on a 1-based G-code line.
+function setGcodeXY(lineNo, x, y) {
+  const ed = $('#gcode');
+  const lines = ed.value.split('\n');
+  const idx = lineNo - 1;
+  if (idx < 0 || idx >= lines.length) return;
+  let ln = lines[idx];
+  ln = /X-?\d*\.?\d+/i.test(ln) ? ln.replace(/X-?\d*\.?\d+/i, 'X' + x.toFixed(3)) : ln + ' X' + x.toFixed(3);
+  ln = /Y-?\d*\.?\d+/i.test(ln) ? ln.replace(/Y-?\d*\.?\d+/i, 'Y' + y.toFixed(3)) : ln + ' Y' + y.toFixed(3);
+  lines[idx] = ln;
+  ed.value = lines.join('\n');
 }
 
 // Show the resolved G41/G42 correction + interior/exterior + display toggles.
@@ -612,6 +694,7 @@ function showCompResult(res) {
   const nOut = res.regions.filter((r) => r.interior === 'outside').length;
 
   const toggles = [
+    `<label class="comp-r" title="Rayon de compensation — modifie et recalcule">R <input type="number" step="0.1" min="0" value="${res.radius.toFixed(3)}" data-tg="radius"> mm</label>`,
     `<label><input type="checkbox" data-tg="orig" ${sc.orig ? 'checked' : ''}><i class="sw sw-orig"></i>Chemin original</label>`,
     has41 ? `<label><input type="checkbox" data-tg="g41" ${sc.g41 ? 'checked' : ''}><i class="sw sw-g41"></i>G41 (gauche)</label>` : '',
     has42 ? `<label><input type="checkbox" data-tg="g42" ${sc.g42 ? 'checked' : ''}><i class="sw sw-g42"></i>G42 (droite)</label>` : '',
@@ -681,6 +764,7 @@ function openDxf(e) {
       if (!count) { logSys('DXF : aucun profil fermé trouvé (LINE/ARC/LWPOLYLINE/CIRCLE).', 'err'); return; }
       const main = largestLoop(polylines);
       clearSimUI();
+      state.compActive = false; state.compRadiusOverride = null;
       state.contour = main;
       state.contours = polylines;
       state.toolPaths = []; state.machined = []; state.rapids = [];
@@ -688,6 +772,7 @@ function openDxf(e) {
       viz.fit(); hideBadge();
       $('#gcode').value = profileGcode(main);
       metaRefresh();
+      if (state.editMode) viz.updateHandles(buildHandles());
       $('#inspectOut').innerHTML = `<span class="muted">DXF chargé : ${count} profil(s), cadre ${bounds.w.toFixed(1)} × ${bounds.h.toFixed(1)} mm. Le plus grand contour est compensable.</span>`;
       logSys(`DXF « ${file.name} » : ${count} profil(s), ${bounds.w.toFixed(1)}×${bounds.h.toFixed(1)} mm.`, 'ok');
     } catch (err) { logSys('DXF illisible : ' + (err.message || err), 'err'); }
@@ -698,6 +783,7 @@ function openDxf(e) {
 
 function loadDemo() {
   clearSimUI();
+  state.compActive = false; state.compRadiusOverride = null;
   state.contour = demoContour('bracket');
   state.contours = []; state.toolPaths = []; state.machined = [];
   const b = polyBounds([state.contour]);
@@ -705,6 +791,7 @@ function loadDemo() {
   viz.fit(); hideBadge();
   $('#gcode').value = profileGcode(state.contour);
   metaRefresh();
+  if (state.editMode) viz.updateHandles(buildHandles());
   $('#inspectOut').innerHTML = `<span class="muted">Profil chargé : ${b.w.toFixed(1)} × ${b.h.toFixed(1)} mm. Lance « Compenser » puis « Contrôler ».</span>`;
   logSys('Géométrie démo chargée (équerre 70×50).');
 }
@@ -730,7 +817,7 @@ function openFile(e) {
   const reader = new FileReader();
   reader.onload = () => {
     $('#gcode').value = reader.result;
-    hadPaths = false; liveTrace();                 // comp-aware render + auto-fit
+    state.compRadiusOverride = null; hadPaths = false; liveTrace();   // comp-aware render + auto-fit
     const r = state.compResult;
     logSys(r && r.count ? `Chargé : ${file.name} — G41/G42 résolu (${r.count} région(s)).` : `Chargé : ${file.name}`, r && r.count ? 'ok' : 'sys');
   };
