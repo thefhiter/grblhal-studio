@@ -18,7 +18,10 @@ grblHAL gère nativement la **correction de longueur** d'outil (`G43 H`, palpage
 | **Table de correction d'outil** | Grille **éditable** (style gmoccapy/LinuxCNC) : on change chaque nombre en place — T# / poche / Ø / R nez (géométrie + **usure**) / décalage **X en Ø** / longueur Z (géométrie + **usure**) / **direction de pointe 0–9** / dents / désignation. Bascule **Fraisage / Tournage**. « Appliquer » pousse toute la table en `G10 L1` (mill : `P Z R` ; tour : `P X Z R Q`). Palpage : *Mesure face Z* (capture la position machine Z) et *Mesure Ø X* (saisie micromètre) — le geste exact du tip Haas. **Exporter / Importer** toute la table déclarée en **CSV** (ou JSON). |
 | **Apparence** | Thème clair « bureau classique » (gris/blanc, à plat) calqué sur ioSender et gmoccapy — pas de mode sombre. |
 | **Vitesses & avances** | `N = 1000·Vc/(π·d)`, `Vf = fz·z·N`, base de données matières (ARS/HSS vs carbure), bridage RPM max, ap/ae par stratégie **ébauche / semi-finition / finition**. |
+| **Import DXF** | Lecture d'un profil 2D réel (LINE / LWPOLYLINE / POLYLINE / ARC / CIRCLE) : arcs & *bulges* aplatis, segments ouverts recousus en boucles. Le plus grand contour devient compensable ; tous les profils (perçages inclus) sont dessinés. Exemple : `public/samples/demo-part.dxf`. |
 | **Compensation de rayon** | Offset robuste (Clipper) intérieur/extérieur, coins convexes = arcs / concaves = rognage, détection de gouge. Le **rayon de nez** de la table pilote directement cette compensation (un R faux = chanfreins qui disparaissent, cf. tip Haas). |
+| **Évidement de poche** | Ébauche par passes concentriques (offsets successifs vers l'intérieur au pas radial *ae*), centre→bord, gestion des poches à étranglement. Option « Opération → Poche ». |
+| **Décalages pièce** | Éditeur **G54–G59** (repères d'origine pièce) : X/Y/Z éditables, *Position → décalage* (depuis le DRO), *Zéro ici* (`G10 L20`), *Activer*, *Appliquer* (`G10 L2`). Un décalage pièce décale **tous** les outils — le pendant du décalage d'outil (cf. tip Haas). |
 | **Contrôle des pièces** | Reconstruit la paroi usinée depuis la trajectoire, compare aux cotes nominales, verdict tolérance. |
 | **Simulation** | Animation de l'outil le long de la trajectoire (top view), pan/zoom. |
 | **Contrôleur** | Dialogue de connexion type **ioSender** (onglets Série / Réseau, port, baud, action *on connect*). Web Serial → grblHAL : DRO, jog, home/unlock, cycle start / feed-hold / soft-reset, arrêt d'urgence, console, streaming avec contrôle de flux `ok`. |
@@ -43,10 +46,12 @@ Le pilotage machine utilise l'**API Web Serial** (Chrome/Edge, contexte `localho
 ```
 public/js/
   materials.js  base Vc + facteurs de stratégie
-  tools.js      modèle d'outil (géométrie + usure, X, direction de pointe), G10 L1, TIP_DIRS
+  tools.js      modèle d'outil (géométrie + usure, X, direction de pointe), G10 L1, TIP_DIRS, CSV
   tooltable.js  grille de correction éditable (Fraisage/Tournage, palpage, sélecteur de pointe)
+  wcs.js        décalages pièce G54–G59 (G10 L2 / L20)
+  dxf.js        lecteur DXF (LINE/LWPOLYLINE/ARC/CIRCLE → boucles fermées)
   feeds.js      N, Vf, ap, ae
-  geometry.js   parse G-code, aplatissement d'arcs, offset Clipper (cutter comp)
+  geometry.js   parse G-code, arcs, offset Clipper (cutter comp + évidement de poche)
   inspect.js    reconstruction paroi usinée + contrôle tolérance
   grbl.js       driver Web Serial (flux ok, temps réel, jog, status, listPorts)
   viz.js        rendu canvas 2D + simulation
