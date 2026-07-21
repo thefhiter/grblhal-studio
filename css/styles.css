@@ -214,6 +214,7 @@ input,select,textarea{font-family:inherit}
   border:1px solid #909090;border-radius:6px;box-shadow:0 16px 44px rgba(0,0,0,.32);overflow:hidden}
 .modal-wide{width:min(1160px,96vw)}
 .modal-conn{width:min(440px,94vw)}
+.modal-wcs{width:min(680px,94vw)}
 .modal-head{display:flex;align-items:center;gap:12px;padding:11px 14px;border-bottom:1px solid var(--border);background:#dfe3e8}
 .mh-title{display:flex;align-items:center;gap:8px}
 .mh-title .ic{color:var(--amber2);width:17px;height:17px}
