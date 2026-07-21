@@ -171,6 +171,53 @@ export function resolveCutterComp(text, radius) {
   return { radius, regions, count: regions.length };
 }
 
+// Resolve the WHOLE program into the tool's real trajectory (comp applied where
+// G41/G42 is active), as an ordered list of segments flagged cutting vs rapid.
+// This is what the PC simulation sweeps to carve the stock.
+export function resolveToolPath(text, radius) {
+  const { moves } = parseGcode(text);
+  const segments = [];
+  let i = 0;
+  while (i < moves.length) {
+    const m = moves[i];
+    if (m.comp === 'left' || m.comp === 'right') {
+      const side = m.comp; const region = [m];
+      let j = i + 1;
+      while (j < moves.length && moves[j].comp === side) { region.push(moves[j]); j++; }
+      const pts = [{ x: region[0].from.x, y: region[0].from.y }];
+      for (const rm of region) for (let k = 1; k < rm.poly.length; k++) pts.push(rm.poly[k]);
+      segments.push({ poly: offsetOpenPath(pts, radius, side), cutting: true, comp: true });
+      i = j;
+    } else {
+      segments.push({ poly: m.poly, cutting: !m.rapid, comp: false });
+      i++;
+    }
+  }
+  return { segments };
+}
+
+// The "part wanted": fill the exterior contour(s) and subtract the pockets, from
+// the PROGRAMMED edges (the design geometry). Returns polygons (with holes) to draw.
+export function partFromRegions(regions) {
+  const ClipperLib = CL(); if (!ClipperLib) return [];
+  const ext = regions.filter((r) => r.interior === 'outside').map((r) => toCl(r.programmed));
+  const inr = regions.filter((r) => r.interior === 'inside').map((r) => toCl(r.programmed));
+  if (!ext.length) return [];
+  const c1 = new ClipperLib.Clipper();
+  c1.AddPaths(ext, ClipperLib.PolyType.ptSubject, true);
+  let sol = new ClipperLib.Paths();
+  c1.Execute(ClipperLib.ClipType.ctUnion, sol, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
+  if (inr.length) {
+    const c2 = new ClipperLib.Clipper();
+    c2.AddPaths(sol, ClipperLib.PolyType.ptSubject, true);
+    c2.AddPaths(inr, ClipperLib.PolyType.ptClip, true);
+    const diff = new ClipperLib.Paths();
+    c2.Execute(ClipperLib.ClipType.ctDifference, diff, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
+    sol = diff;
+  }
+  return sol.map(fromCl);
+}
+
 // ---- G-code parsing -------------------------------------------------------
 // Produces display moves (rapid vs cut) with flattened geometry, plus bounds.
 export function parseGcode(text) {
