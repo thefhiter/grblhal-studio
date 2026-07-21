@@ -1,6 +1,6 @@
 // app.js — wires the cockpit together.
 import { MATERIALS, STRATEGY } from './materials.js';
-import { TOOL_TYPES, TIP_DIRS, loadTools, saveTools, mkTool, effRadius, effDia, effLength, toolToG10, nextToolId } from './tools.js';
+import { TOOL_TYPES, TIP_DIRS, loadTools, saveTools, mkTool, effRadius, effDia, effLength, toolToG10, nextToolId, toolsToCSV, csvToTools } from './tools.js';
 import { computeCutting } from './feeds.js';
 import { parseGcode, compensate, polysToGcode, demoContour, polyBounds } from './geometry.js';
 import { inspect } from './inspect.js';
@@ -58,7 +58,7 @@ function initToolTable() {
     latheHint: $('#ttLatheHint'),
     tipPicker: { back: $('#tipBack'), grid: $('#tipGrid') },
     controls: {
-      add: $('#ttAdd'), del: $('#ttDel'), reload: $('#ttReload'), apply: $('#ttApply'),
+      add: $('#ttAdd'), del: $('#ttDel'), apply: $('#ttApply'),
       grabZ: $('#ttGrabZ'), grabX: $('#ttGrabX'), close: $('#ttClose'),
     },
     deps: {
@@ -75,6 +75,16 @@ function initToolTable() {
   });
   $('#btnOpenTable').addEventListener('click', () => toolTable.open());
   $('#btnOpenTable2').addEventListener('click', () => toolTable.open());
+  $('#ttExport').addEventListener('click', exportToolsCSV);
+  $('#ttImport').addEventListener('click', () => $('#fileTools').click());
+}
+
+// Extract the full declared tool table as a CSV spreadsheet.
+function exportToolsCSV() {
+  const csv = toolsToCSV(state.tools);
+  download('table-outils.csv', '﻿' + csv);      // BOM → accents OK in Excel
+  logSys(`Table exportée : ${state.tools.length} outils → table-outils.csv`, 'ok');
+  if (toolTable) flash($('#ttExport'));
 }
 
 // Table edited a tool → keep the left cockpit (list, editor, comp select, feeds) in sync.
@@ -509,7 +519,22 @@ function menuAct(act) {
   }
 }
 function insG(t) { const ta = $('#gcode'); ta.value += (ta.value.endsWith('\n') || !ta.value ? '' : '\n') + t + '\n'; }
-$('#fileTools')?.addEventListener?.('change', (e) => { const file = e.target.files[0]; if (!file) return; const r = new FileReader(); r.onload = () => { try { state.tools = JSON.parse(r.result).map(mkTool); saveTools(state.tools); selectTool(state.tools[0].id); renderToolList(); refreshCompToolSelect(); refreshTableIfOpen(); logSys('Outils importés.', 'ok'); } catch (_) { logSys('JSON outils invalide.', 'err'); } }; r.readAsText(file); e.target.value = ''; });
+$('#fileTools')?.addEventListener?.('change', (e) => {
+  const file = e.target.files[0]; if (!file) return;
+  const r = new FileReader();
+  r.onload = () => {
+    try {
+      const text = String(r.result).replace(/^﻿/, '');
+      const isCsv = /\.csv$/i.test(file.name) || (!text.trim().startsWith('[') && !text.trim().startsWith('{'));
+      const tools = isCsv ? csvToTools(text) : JSON.parse(text).map(mkTool);
+      if (!tools.length) throw new Error('vide');
+      state.tools = tools; saveTools(state.tools);
+      selectTool(state.tools[0].id); renderToolList(); refreshCompToolSelect(); refreshTableIfOpen();
+      logSys(`${tools.length} outils importés (${isCsv ? 'CSV' : 'JSON'}).`, 'ok');
+    } catch (err) { logSys('Fichier outils invalide (CSV ou JSON attendu).', 'err'); }
+  };
+  r.readAsText(file); e.target.value = '';
+});
 
 // ---------- helpers ----------
 function activeTool() { return state.tools.find((x) => x.id === state.activeId) || state.tools[0]; }

@@ -25,6 +25,7 @@
   <symbol id="i-comp" viewBox="0 0 24 24"><circle cx="9" cy="12" r="6" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M15 6v12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-dasharray="3 2"/></symbol>
   <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 13l4 4 10-11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 5l7 7M12 5l-7 7M12 5v14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 19l7-7M12 19l-7-7M12 19V5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="i-table" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M3 9h18M3 14h18M9 4v16M15 4v16" stroke="currentColor" stroke-width="1.4"/></symbol>
   <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/></symbol>
 </svg>
@@ -32,7 +33,7 @@
 <!-- ===== Top bar ===== -->
 <header class="topbar">
   <div class="brand">
-    <svg class="logo" viewBox="0 0 32 32"><circle cx="16" cy="16" r="9" fill="none" stroke="#f5b043" stroke-width="2.4"/><circle cx="16" cy="16" r="2.6" fill="#4cc9f0"/><path d="M16 3v4M16 25v4M3 16h4M25 16h4" stroke="#4cc9f0" stroke-width="2" stroke-linecap="round"/></svg>
+    <svg class="logo" viewBox="0 0 32 32"><circle cx="16" cy="16" r="9" fill="none" stroke="#d9770b" stroke-width="2.4"/><circle cx="16" cy="16" r="2.6" fill="#1668c0"/><path d="M16 3v4M16 25v4M3 16h4M25 16h4" stroke="#1668c0" stroke-width="2" stroke-linecap="round"/></svg>
     <div><b>grblHAL</b> <span>Studio</span></div>
   </div>
 
@@ -242,7 +243,7 @@
 </footer>
 
 <input type="file" id="fileInput" accept=".nc,.gcode,.txt,.tap,.cnc" hidden />
-<input type="file" id="fileTools" accept=".json" hidden />
+<input type="file" id="fileTools" accept=".json,.csv" hidden />
 
 <!-- ===== Tool-correction table modal (gmoccapy-style editable grid) ===== -->
 <div class="modal-back" id="ttBack" hidden>
@@ -264,7 +265,8 @@
       <div class="foot-group">
         <button class="btn sm" id="ttAdd"><svg class="ic"><use href="#i-plus"/></svg> Ajouter</button>
         <button class="btn sm btn-ghost danger" id="ttDel"><svg class="ic"><use href="#i-trash"/></svg> Supprimer</button>
-        <button class="btn sm" id="ttReload">Recharger</button>
+        <button class="btn sm" id="ttExport" title="Extraire toute la table déclarée (CSV)"><svg class="ic"><use href="#i-down"/></svg> Exporter</button>
+        <button class="btn sm" id="ttImport" title="Importer une table (CSV / JSON)">Importer</button>
       </div>
       <div class="foot-group touch" id="ttTouch">
         <span class="fg-label"><svg class="ic"><use href="#i-target"/></svg> Palpage (outil actif)</span>
