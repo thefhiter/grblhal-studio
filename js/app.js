@@ -28,6 +28,7 @@ const state = {
   machined: [],
   parsedMoves: [],       // moves from the live G-code editor (for cursor highlight)
   compResult: null,      // resolved G41/G42 regions (from the editor)
+  showComp: { orig: true, g41: true, g42: true },  // G41/G42 display toggles
   compSide: 'outside',
   wcs: loadWcs(),
   wcsActiveP: 1,
@@ -417,6 +418,15 @@ function bindViz() {
   $('#btnComp').addEventListener('click', runComp);
   $('#btnSim').addEventListener('click', toggleSim);
   $('#btnInspect').addEventListener('click', runInspect);
+
+  // G41/G42 display toggles (checkboxes rendered in the inspect bar)
+  $('#inspectOut').addEventListener('change', (e) => {
+    const tg = e.target.dataset && e.target.dataset.tg;
+    if (!tg) return;
+    state.showComp[tg] = e.target.checked;
+    viz.scene.showComp = state.showComp;
+    viz.draw();
+  });
 }
 
 function runComp() {
@@ -564,10 +574,11 @@ function liveTrace() {
     const radius = compRadiusFromText(text);
     const res = resolveCutterComp(text, radius);
     state.compResult = res;
-    state.contours = res.regions.map((r) => r.programmed);      // programmed part edge (blue)
-    state.toolPaths = res.regions.map((r) => r.compensated);    // resolved tool centre (orange)
-    state.contour = []; state.rapids = []; state.machined = [];
-    viz.setScene({ contour: [], contours: state.contours, toolPaths: state.toolPaths, rapids: [], machined: [], highlight: null });
+    state.contours = res.regions.map((r) => r.programmed);          // original (uncompensated) tool path — blue
+    const comp41 = res.regions.filter((r) => r.code === 'G41').map((r) => r.compensated);  // left  → green
+    const comp42 = res.regions.filter((r) => r.code === 'G42').map((r) => r.compensated);  // right → magenta
+    state.contour = []; state.toolPaths = []; state.rapids = []; state.machined = [];
+    viz.setScene({ contour: [], contours: state.contours, toolPaths: [], comp41, comp42, showComp: state.showComp, rapids: [], machined: [], highlight: null });
     showCompResult(res);
   } else {
     state.compResult = null;
@@ -575,7 +586,7 @@ function liveTrace() {
     const rapids = p.moves.filter((m) => m.rapid).map((m) => m.poly);
     state.toolPaths = cuts; state.rapids = rapids;
     state.contour = []; state.contours = []; state.machined = [];
-    viz.setScene({ contour: [], contours: [], toolPaths: cuts, rapids, machined: [], highlight: null });
+    viz.setScene({ contour: [], contours: [], toolPaths: cuts, comp41: [], comp42: [], rapids, machined: [], highlight: null });
   }
   if (hasPaths && !hadPaths) viz.fit();                          // auto-fit on first content / fresh paste
   hadPaths = hasPaths;
@@ -591,17 +602,30 @@ function compRadiusFromText(text) {
   return effRadius(activeTool());
 }
 
-// Show the resolved G41/G42 correction + interior/exterior in the inspect bar.
+// Show the resolved G41/G42 correction + interior/exterior + display toggles.
 function showCompResult(res) {
   if (!res.count) { $('#inspectOut').innerHTML = '<span class="muted">G41/G42 présent mais aucune région exploitable.</span>'; return; }
+  const has41 = res.regions.some((r) => r.code === 'G41');
+  const has42 = res.regions.some((r) => r.code === 'G42');
+  const sc = state.showComp;
   const nIn = res.regions.filter((r) => r.interior === 'inside').length;
   const nOut = res.regions.filter((r) => r.interior === 'outside').length;
+
+  const toggles = [
+    `<label><input type="checkbox" data-tg="orig" ${sc.orig ? 'checked' : ''}><i class="sw sw-orig"></i>Chemin original</label>`,
+    has41 ? `<label><input type="checkbox" data-tg="g41" ${sc.g41 ? 'checked' : ''}><i class="sw sw-g41"></i>G41 (gauche)</label>` : '',
+    has42 ? `<label><input type="checkbox" data-tg="g42" ${sc.g42 ? 'checked' : ''}><i class="sw sw-g42"></i>G42 (droite)</label>` : '',
+  ].join('');
+
   const rows = res.regions.map((r, i) => {
-    const label = r.interior === 'inside' ? 'INTÉRIEUR' : 'EXTÉRIEUR';
-    return `<div class="cell"><span class="k">Région ${i + 1} · ${r.code}${r.dReg != null ? ' D' + r.dReg : ''}</span><span class="v ${r.interior === 'inside' ? 'io-in' : 'io-out'}">${label}</span></div>`;
+    const side = r.code === 'G41' ? 'gauche' : 'droite';
+    const io = r.interior === 'inside' ? 'INTÉRIEUR' : 'EXTÉRIEUR';
+    return `<div class="cell"><span class="k">Région ${i + 1} · <b class="${r.code === 'G41' ? 'tag-g41' : 'tag-g42'}">${r.code}</b> ${side}${r.dReg != null ? ' · D' + r.dReg : ''}</span><span class="v ${r.interior === 'inside' ? 'io-in' : 'io-out'}">${io}</span></div>`;
   }).join('');
+
   $('#inspectOut').innerHTML =
-    `<span class="insp-verdict pass"><svg class="ic"><use href="#i-comp"/></svg>G41/G42 résolu · ${res.count} région(s) · R ${res.radius.toFixed(3)} mm</span>
+    `<div class="comp-toggles">${toggles}</div>
+     <span class="insp-verdict pass"><svg class="ic"><use href="#i-comp"/></svg>G41/G42 résolu · ${res.count} région(s) · R ${res.radius.toFixed(3)} mm</span>
      <div class="insp-tbl">${rows}<div class="cell"><span class="k">Bilan</span><span class="v">${nIn} int · ${nOut} ext</span></div></div>`;
 }
 
