@@ -11,6 +11,7 @@
   --r:5px; --r-sm:3px;
   --sp:8px;
   --topbar-h:50px; --gcode-h:172px;
+  --col-left:308px; --col-right:268px; --gutter:6px;
 }
 *{box-sizing:border-box}
 html,body{height:100%}
@@ -73,8 +74,20 @@ input,select,textarea{font-family:inherit}
 .btn-conn .ic{color:var(--green)}
 
 /* ===== cockpit grid ===== */
-.cockpit{flex:1;min-height:0;display:grid;grid-template-columns:308px 1fr 268px;gap:1px;background:var(--border);overflow:hidden}
+.cockpit{flex:1;min-height:0;display:grid;grid-template-columns:var(--col-left) var(--gutter) 1fr var(--gutter) var(--col-right);gap:0;background:var(--border);overflow:hidden}
 .col{background:var(--bg2);overflow-y:auto;display:flex;flex-direction:column;gap:1px}
+
+/* ===== resizable splitters ===== */
+.splitter{background:var(--border);cursor:col-resize;position:relative;z-index:6;touch-action:none}
+.splitter:hover,.splitter.drag{background:var(--cyan)}
+.splitter::before{content:"";position:absolute;top:0;bottom:0;left:-4px;right:-4px}   /* forgiving grab zone */
+.splitter::after{content:"";position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:2px;height:28px;border-radius:2px;background:rgba(0,0,0,.18)}
+.splitter:hover::after,.splitter.drag::after{background:#fff}
+.hsplitter{height:var(--gutter);flex:none;background:var(--border);cursor:row-resize;position:relative;z-index:6;touch-action:none}
+.hsplitter:hover,.hsplitter.drag{background:var(--cyan)}
+.hsplitter::before{content:"";position:absolute;left:0;right:0;top:-4px;bottom:-4px}
+.hsplitter::after{content:"";position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:28px;height:2px;border-radius:2px;background:rgba(0,0,0,.18)}
+.hsplitter:hover::after,.hsplitter.drag::after{background:#fff}
 .col-center{background:var(--bg);overflow:hidden}
 .panel{background:var(--bg2);padding:11px 12px;border-bottom:1px solid var(--line)}
 .panel-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:9px;gap:8px}
@@ -309,12 +322,13 @@ select.mini,input.mini{background:var(--panel);border:1px solid var(--border2);b
 
 /* ===== responsive ===== */
 @media(max-width:1180px){
-  .cockpit{grid-template-columns:280px 1fr 250px}
+  :root{--col-left:270px;--col-right:248px}
 }
 @media(max-width:960px){
   body{overflow:auto}
   .cockpit{grid-template-columns:1fr;height:auto}
   .col{overflow:visible}
+  .splitter,.hsplitter{display:none}
   .viz-wrap{height:52vh}
   .gcode-bar{height:auto}
 }
