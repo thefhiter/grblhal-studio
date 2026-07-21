@@ -421,6 +421,7 @@ function bindViz() {
 
 function runComp() {
   if (!state.contour.length) return logSys('Aucun profil. Charge la géométrie démo ou un DXF.', 'err');
+  clearSimUI();
   const id = +$('#compTool').value;
   const t = state.tools.find((x) => x.id === id) || state.tools[0];
   const r = effRadius(t);
@@ -457,6 +458,7 @@ function toggleSim() {
 }
 
 function runCutSim() {
+  viz.clearSim();                                 // reset any previous simulation first
   const text = $('#gcode').value.trim();
   const p = parseGcode(text);
   let segments, radius;
@@ -496,9 +498,19 @@ function runCutSim() {
 }
 function setSimIcon(playing) { $('#btnSim').innerHTML = `<svg class="ic"><use href="#${playing ? 'i-pause' : 'i-play'}"/></svg> ${playing ? 'Pause' : 'Simuler'}`; }
 
+// Clear the simulation AND reset its UI (button label, progress) — used by any
+// action that replaces the view, so the app never gets stuck after a sim.
+function clearSimUI() {
+  viz.clearSim();
+  setSimIcon(false);
+  const sp = $('#streamProg');
+  if (sp && sp.textContent.startsWith('coupe')) sp.textContent = '';
+}
+
 function runInspect() {
   if (!state.toolPaths.length) return logSys('Compense d\'abord un profil.', 'err');
   if (state.compSide === 'pocket') return logSys('Le contrôle de cote s\'applique au contournage, pas à l\'évidement de poche.', 'sys');
+  clearSimUI();
   const id = +$('#compTool').value;
   const t = state.tools.find((x) => x.id === id) || state.tools[0];
   const res = inspect(state.contour, state.toolPaths, effRadius(t), state.compSide, state.tol);
@@ -541,9 +553,7 @@ let hadPaths = false;
 // Parse the editor text and render its toolpath directly (no import needed).
 // If the program uses G41/G42, resolve the compensation and show the correction.
 function liveTrace() {
-  if (viz.cut) viz.stopCut();                    // editing cancels a running cut sim
-  viz.clearStock();
-  viz.scene.partOutline = null; viz.scene.realPath = null;
+  clearSimUI();                                  // editing cancels/clears any cut simulation
   const text = $('#gcode').value;
   const p = parseGcode(text);
   state.parsedMoves = p.moves;
@@ -646,6 +656,7 @@ function openDxf(e) {
       const { polylines, bounds, count } = parseDXF(String(reader.result));
       if (!count) { logSys('DXF : aucun profil fermé trouvé (LINE/ARC/LWPOLYLINE/CIRCLE).', 'err'); return; }
       const main = largestLoop(polylines);
+      clearSimUI();
       state.contour = main;
       state.contours = polylines;
       state.toolPaths = []; state.machined = []; state.rapids = [];
@@ -662,6 +673,7 @@ function openDxf(e) {
 }
 
 function loadDemo() {
+  clearSimUI();
   state.contour = demoContour('bracket');
   state.contours = []; state.toolPaths = []; state.machined = [];
   const b = polyBounds([state.contour]);
