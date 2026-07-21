@@ -52,18 +52,18 @@ export class Viz {
     const { ctx, cv } = this;
     ctx.save();
     ctx.clearRect(0, 0, cv.width, cv.height);
-    ctx.fillStyle = '#0c1016';
+    ctx.fillStyle = '#f4f5f6';                       // light CAD viewport
     ctx.fillRect(0, 0, cv.width, cv.height);
     this._grid();
     this._axes();
     // rapids
-    this._polys(this.scene.rapids, { color: 'rgba(120,140,160,0.35)', width: 1, dash: [6, 5] });
+    this._polys(this.scene.rapids, { color: 'rgba(120,120,120,0.55)', width: 1, dash: [6, 5] });
     // machined boundary (inspection)
-    if (this.scene.machined && this.scene.machined.length) this._polys(this.scene.machined, { color: 'rgba(72,213,151,0.85)', width: 1.5, close: true });
+    if (this.scene.machined && this.scene.machined.length) this._polys(this.scene.machined, { color: 'rgba(23,130,60,0.9)', width: 1.6, close: true });
     // nominal contour
-    if (this.scene.contour && this.scene.contour.length) this._polys([this.scene.contour], { color: '#4cc9f0', width: 2, close: true });
+    if (this.scene.contour && this.scene.contour.length) this._polys([this.scene.contour], { color: '#1668c0', width: 2, close: true });
     // tool-centre compensated path
-    this._polys(this.scene.toolPaths, { color: '#f5b043', width: 2, close: true });
+    this._polys(this.scene.toolPaths, { color: '#d9770b', width: 2, close: true });
     // tool marker
     if (this.sim && this.sim.pos) this._tool(this.sim.pos);
     ctx.restore();
@@ -74,7 +74,7 @@ export class Viz {
     const step = niceStep(this.scale);
     const s = step * this.scale;
     if (s < 6) return;
-    ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(90,120,150,0.08)';
+    ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(0,0,0,0.07)';
     const startX = this.ox % s, startY = this.oy % s;
     ctx.beginPath();
     for (let x = startX; x < cv.width; x += s) { ctx.moveTo(x, 0); ctx.lineTo(x, cv.height); }
@@ -86,9 +86,9 @@ export class Viz {
     const { ctx } = this;
     const o = this.W2S({ x: 0, y: 0 });
     ctx.lineWidth = 1.4;
-    ctx.strokeStyle = 'rgba(248,115,127,0.7)'; ctx.beginPath(); ctx.moveTo(o.x, o.y); ctx.lineTo(o.x + 34 * this.dpr, o.y); ctx.stroke();      // X red
-    ctx.strokeStyle = 'rgba(72,213,151,0.7)'; ctx.beginPath(); ctx.moveTo(o.x, o.y); ctx.lineTo(o.x, o.y - 34 * this.dpr); ctx.stroke();      // Y green
-    ctx.fillStyle = 'rgba(200,215,230,0.7)'; ctx.beginPath(); ctx.arc(o.x, o.y, 3 * this.dpr, 0, 7); ctx.fill();
+    ctx.strokeStyle = 'rgba(200,45,45,0.8)'; ctx.beginPath(); ctx.moveTo(o.x, o.y); ctx.lineTo(o.x + 34 * this.dpr, o.y); ctx.stroke();      // X red
+    ctx.strokeStyle = 'rgba(23,130,60,0.8)'; ctx.beginPath(); ctx.moveTo(o.x, o.y); ctx.lineTo(o.x, o.y - 34 * this.dpr); ctx.stroke();      // Y green
+    ctx.fillStyle = 'rgba(40,40,40,0.7)'; ctx.beginPath(); ctx.arc(o.x, o.y, 3 * this.dpr, 0, 7); ctx.fill();
   }
 
   _polys(polys, { color, width = 2, dash = [], close = false }) {
@@ -113,9 +113,9 @@ export class Viz {
     const c = this.W2S(pos);
     const r = Math.max(3, this.scene.toolRadius * this.scale);
     ctx.beginPath(); ctx.arc(c.x, c.y, r, 0, 7);
-    ctx.fillStyle = 'rgba(245,176,67,0.18)'; ctx.fill();
-    ctx.lineWidth = 1.6 * this.dpr; ctx.strokeStyle = '#ffd27a'; ctx.stroke();
-    ctx.beginPath(); ctx.arc(c.x, c.y, 2.5 * this.dpr, 0, 7); ctx.fillStyle = '#ffd27a'; ctx.fill();
+    ctx.fillStyle = 'rgba(217,119,11,0.18)'; ctx.fill();
+    ctx.lineWidth = 1.6 * this.dpr; ctx.strokeStyle = '#b45f00'; ctx.stroke();
+    ctx.beginPath(); ctx.arc(c.x, c.y, 2.5 * this.dpr, 0, 7); ctx.fillStyle = '#b45f00'; ctx.fill();
   }
 
   // ---- simulation --------------------------------------------------------
