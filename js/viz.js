@@ -227,7 +227,14 @@ export class Viz {
     this._cutLoop();
   }
   toggleCut() { if (this.cut) { this.cut.playing = !this.cut.playing; if (this.cut.playing) this._cutLoop(); } }
-  stopCut() { if (this.cut) this.cut.playing = false; this.cut = null; if (this._raf) cancelAnimationFrame(this._raf); this.draw(); }
+  stopCut() { if (this._raf) cancelAnimationFrame(this._raf); this.cut = null; this.draw(); }
+
+  // Fully clear the simulation (stock + tool + overlays) so a new scene shows clean.
+  clearSim() {
+    if (this._raf) cancelAnimationFrame(this._raf);
+    this.cut = null; this.stock = null;
+    this.scene.realPath = null; this.scene.partOutline = null;
+  }
 
   _cutLoop() {
     const c = this.cut; if (!c || !c.playing) return;
@@ -239,7 +246,14 @@ export class Viz {
     }
     this.draw();
     if (c.onProgress) c.onProgress(c.i / Math.max(1, c.steps.length));
-    if (c.i >= c.steps.length) { c.playing = false; if (c.onDone) c.onDone(); return; }
+    if (c.i >= c.steps.length) {
+      c.playing = false;
+      const done = c.onDone;
+      this.cut = null;               // finished — allow a fresh run; keep the carved stock as the result
+      this.draw();                   // redraw without the moving tool marker
+      if (done) done();
+      return;
+    }
     this._raf = requestAnimationFrame(() => this._cutLoop());
   }
 
