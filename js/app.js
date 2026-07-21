@@ -2,7 +2,7 @@
 import { MATERIALS, STRATEGY } from './materials.js';
 import { TOOL_TYPES, TIP_DIRS, loadTools, saveTools, mkTool, effRadius, effDia, effLength, toolToG10, nextToolId, toolsToCSV, csvToTools } from './tools.js';
 import { computeCutting } from './feeds.js';
-import { parseGcode, compensate, pocketClear, resolveCutterComp, polysToGcode, demoContour, polyBounds, pathLength } from './geometry.js';
+import { parseGcode, compensate, pocketClear, resolveCutterComp, resolveToolPath, partFromRegions, polysToGcode, demoContour, polyBounds, pathLength } from './geometry.js';
 import { inspect } from './inspect.js';
 import { Viz } from './viz.js';
 import { grbl } from './grbl.js';
@@ -387,11 +387,49 @@ function runComp() {
   else logSys(`Compensation T${id} · R${r.toFixed(3)} · ${state.compSide} · surép. ${stock} → ${res.paths.length} contour(s).`, 'ok');
 }
 
+// Play/pause the material-removal simulation: the tool sweeps its real
+// (comp-applied) path and carves the part out of a stock block.
 function toggleSim() {
-  if (!state.toolPaths.length) return logSys('Compense d\'abord un profil.', 'err');
-  if (viz.sim && viz.sim.playing) { viz.toggleSim(); setSimIcon(false); return; }
-  if (viz.sim && !viz.sim.playing) { viz.toggleSim(); setSimIcon(true); return; }
-  viz.simulate(state.toolPaths, () => setSimIcon(false));
+  if (viz.cut) { viz.toggleCut(); setSimIcon(viz.cut && viz.cut.playing); return; }
+  runCutSim();
+}
+
+function runCutSim() {
+  const text = $('#gcode').value.trim();
+  const p = parseGcode(text);
+  let segments, radius;
+
+  if (p.moves.some((m) => m.comp && m.comp !== 'off')) {
+    // program carries G41/G42 → resolve the real path + the desired part
+    radius = compRadiusFromText(text);
+    segments = resolveToolPath(text, radius).segments;
+    const res = state.compResult || resolveCutterComp(text, radius);
+    viz.scene.partOutline = partFromRegions(res.regions);
+  } else if (state.toolPaths.length) {
+    // a compensated/pocket/DXF path already in the scene
+    radius = effRadius(activeTool());
+    segments = state.toolPaths.map((poly) => ({ poly, cutting: true, comp: false }));
+    viz.scene.partOutline = state.contour && state.contour.length ? [state.contour] : null;
+  } else if (p.moves.length) {
+    radius = effRadius(activeTool());
+    segments = p.moves.map((m) => ({ poly: m.poly, cutting: !m.rapid, comp: false }));
+    viz.scene.partOutline = null;
+  } else {
+    return logSys('Rien à simuler — charge un G-code, un DXF ou compense un profil.', 'err');
+  }
+
+  const cutPolys = segments.filter((s) => s.cutting).map((s) => s.poly);
+  const bounds = polyBounds(cutPolys.length ? cutPolys : segments.map((s) => s.poly));
+  if (!(bounds.w > 0 || bounds.h > 0)) return logSys('Trajectoire vide.', 'err');
+
+  viz.scene.realPath = segments;
+  viz.scene.contour = []; viz.scene.contours = []; viz.scene.toolPaths = []; viz.scene.machined = []; viz.scene.highlight = null;
+  viz.initStock(bounds, Math.max(4, radius * 1.5));
+  viz.fit();
+  logSys(`Simulation coupe — outil R ${radius.toFixed(3)} mm sur ${cutPolys.length} tronçon(s)…`, 'ok');
+  viz.simulateCut(segments, radius,
+    (prog) => { $('#streamProg').textContent = `coupe ${Math.round(prog * 100)}%`; },
+    () => { setSimIcon(false); $('#streamProg').textContent = ''; logSys('Simulation terminée — pièce obtenue.', 'ok'); });
   setSimIcon(true);
 }
 function setSimIcon(playing) { $('#btnSim').innerHTML = `<svg class="ic"><use href="#${playing ? 'i-pause' : 'i-play'}"/></svg> ${playing ? 'Pause' : 'Simuler'}`; }
@@ -441,6 +479,9 @@ let hadPaths = false;
 // Parse the editor text and render its toolpath directly (no import needed).
 // If the program uses G41/G42, resolve the compensation and show the correction.
 function liveTrace() {
+  if (viz.cut) viz.stopCut();                    // editing cancels a running cut sim
+  viz.clearStock();
+  viz.scene.partOutline = null; viz.scene.realPath = null;
   const text = $('#gcode').value;
   const p = parseGcode(text);
   state.parsedMoves = p.moves;
