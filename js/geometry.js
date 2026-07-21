@@ -102,7 +102,9 @@ export function parseGcode(text) {
   let x = 0, y = 0, z = 0, g = 0, abs = true;
   const lines = String(text).split(/\r?\n/);
 
+  let srcLine = 0;
   for (let raw of lines) {
+    srcLine++;
     const line = raw.replace(/\(.*?\)/g, '').replace(/;.*$/, '').trim();
     if (!line) continue;
     const words = line.match(/([A-Za-z])\s*(-?\d*\.?\d+)/g) || [];
@@ -126,9 +128,9 @@ export function parseGcode(text) {
       if (g === 2 || g === 3) {
         const cx = x + (w.I || 0), cy = y + (w.J || 0);
         const poly = flattenArc(x, y, nx, ny, cx, cy, g === 2);
-        moves.push({ rapid: false, kind: 'arc', from: { x, y, z }, to: { x: nx, y: ny, z: nz }, poly });
+        moves.push({ rapid: false, kind: 'arc', from: { x, y, z }, to: { x: nx, y: ny, z: nz }, poly, srcLine });
       } else {
-        moves.push({ rapid: g === 0, kind: 'line', from: { x, y, z }, to: { x: nx, y: ny, z: nz }, poly: [{ x, y }, { x: nx, y: ny }] });
+        moves.push({ rapid: g === 0, kind: 'line', from: { x, y, z }, to: { x: nx, y: ny, z: nz }, poly: [{ x, y }, { x: nx, y: ny }], srcLine });
       }
     }
     x = nx; y = ny; z = nz;
@@ -177,6 +179,15 @@ export function polysToGcode(polys, { feed = 600, plunge = 200, safeZ = 5, cutZ 
 }
 
 const f = (v) => (Math.round(v * 1000) / 1000).toFixed(3);
+
+// Total polyline length (mm) — used for the live G-code stats.
+export function pathLength(polys) {
+  let len = 0;
+  for (const poly of polys || []) {
+    for (let i = 1; i < poly.length; i++) len += Math.hypot(poly[i].x - poly[i - 1].x, poly[i].y - poly[i - 1].y);
+  }
+  return len;
+}
 
 // ---- demo geometry --------------------------------------------------------
 export function demoContour(kind = 'bracket') {
