@@ -236,7 +236,8 @@
 <!-- ===== G-code bar ===== -->
 <footer class="gcode-bar">
   <div class="gc-head">
-    <h2>G-code</h2>
+    <h2>Éditeur G-code</h2>
+    <span class="gc-stats" id="gcStats">aperçu en direct</span>
     <div class="gc-actions">
       <button class="btn xs" id="btnImportDxf"><svg class="ic"><use href="#i-down"/></svg> Importer DXF</button>
       <button class="btn xs" id="btnLoadDemo">Géométrie démo</button>
@@ -247,7 +248,18 @@
       <button class="btn xs btn-primary" id="btnStream"><svg class="ic"><use href="#i-up"/></svg> Envoyer à la machine</button>
     </div>
   </div>
-  <textarea id="gcode" spellcheck="false" placeholder="; Colle ou charge ton programme G-code ici, ou clique « Géométrie démo »."></textarea>
+  <div class="editor" id="editorWrap">
+    <div class="gutter" id="gcGutter" aria-hidden="true">1</div>
+    <textarea id="gcode" spellcheck="false" placeholder="; Tape ou colle ton G-code — l'aperçu se met à jour en direct.
+; La ligne sous le curseur est surlignée dans la vue.
+G21 G90
+G0 X0 Y0
+G1 X30 Y0 F600
+G1 X30 Y20
+G2 X20 Y30 I-10 J0
+G1 X0 Y30
+G1 X0 Y0"></textarea>
+  </div>
 </footer>
 
 <input type="file" id="fileInput" accept=".nc,.gcode,.txt,.tap,.cnc" hidden />
