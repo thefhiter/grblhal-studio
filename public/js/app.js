@@ -7,6 +7,8 @@ import { inspect } from './inspect.js';
 import { Viz } from './viz.js';
 import { grbl } from './grbl.js';
 import { ToolTable } from './tooltable.js';
+import { parseDXF, largestLoop } from './dxf.js';
+import { loadWcs, saveWcs, wcsToG10, wcsSetHere } from './wcs.js';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
@@ -19,11 +21,14 @@ const state = {
   rpmMax: 24000,
   tol: 0.05,
   cutZ: -1, safeZ: 5, feed: 600, plunge: 200,
-  contour: [],           // nominal closed profile
+  contour: [],           // nominal closed profile (the one compensated)
+  contours: [],          // all nominal loops (e.g. from a DXF)
   toolPaths: [],         // compensated tool-centre polys
   rapids: [],
   machined: [],
   compSide: 'outside',
+  wcs: loadWcs(),
+  wcsActiveP: 1,
 };
 
 let viz;
@@ -45,6 +50,7 @@ window.addEventListener('DOMContentLoaded', () => {
   bindMachine();
   initToolTable();
   bindConnDialog();
+  initWcs();
   loadDemo();
   logSys('Prêt. Connecte la machine (Chrome/Edge) ou explore la CAO.');
 });
@@ -123,6 +129,74 @@ function droVec() {
   const p = s.wpos && s.wpos.some(Boolean) ? s.wpos : s.mpos;
   return { x: p[0] || 0, y: p[1] || 0, z: p[2] || 0 };
 }
+
+// ---------- work offsets (G54–G59) ----------
+function initWcs() {
+  $('#btnWcs').addEventListener('click', openWcs);
+  $('#wcsClose').addEventListener('click', () => ($('#wcsBack').hidden = true));
+  $('#wcsBack').addEventListener('mousedown', (e) => { if (e.target === $('#wcsBack')) $('#wcsBack').hidden = true; });
+  $('#wcsApply').addEventListener('click', applyWcs);
+  $('#wcsFromDro').addEventListener('click', wcsFromDro);
+  $('#wcsZeroHere').addEventListener('click', wcsZeroHere);
+  $('#wcsActivate').addEventListener('click', wcsActivate);
+
+  const t = $('#wcsTable');
+  t.addEventListener('input', (e) => {
+    const el = e.target; const p = +el.dataset.p; const field = el.dataset.field; if (!field) return;
+    const w = state.wcs.find((x) => x.p === p); if (!w) return;
+    w[field] = field === 'note' ? el.value : (parseFloat(el.value) || 0);
+    saveWcs(state.wcs);
+  });
+  t.addEventListener('click', (e) => {
+    const r = e.target.closest('[data-act="wcs-sel"]');
+    if (r) { state.wcsActiveP = +r.dataset.p; renderWcs(); return; }
+    const tr = e.target.closest('tr[data-p]');
+    if (tr && !e.target.closest('input,button')) { state.wcsActiveP = +tr.dataset.p; renderWcs(); }
+  });
+}
+function openWcs() { $('#wcsBack').hidden = false; renderWcs(); }
+
+function renderWcs() {
+  const head = `<thead><tr><th style="width:30px"></th><th style="width:64px">Repère</th>
+    <th style="width:96px">X<i>mm</i></th><th style="width:96px">Y<i>mm</i></th><th style="width:96px">Z<i>mm</i></th>
+    <th>Note</th></tr></thead>`;
+  const rows = state.wcs.map((w) => `<tr data-p="${w.p}" class="${w.p === state.wcsActiveP ? 'is-active' : ''}">
+    <td class="c-sel"><label class="tt-radio"><input type="radio" name="wcs-active" ${w.p === state.wcsActiveP ? 'checked' : ''} data-act="wcs-sel" data-p="${w.p}"></label></td>
+    <td class="c-id"><b>${w.code}</b> <span class="muted">P${w.p}</span></td>
+    <td class="c-num"><input class="tt-in" type="number" step="0.001" value="${fmtn(w.x)}" data-p="${w.p}" data-field="x"></td>
+    <td class="c-num"><input class="tt-in" type="number" step="0.001" value="${fmtn(w.y)}" data-p="${w.p}" data-field="y"></td>
+    <td class="c-num"><input class="tt-in" type="number" step="0.001" value="${fmtn(w.z)}" data-p="${w.p}" data-field="z"></td>
+    <td><input class="tt-in tt-text" type="text" value="${esc(w.note)}" data-p="${w.p}" data-field="note" placeholder="ex. OP 1 — brut"></td>
+  </tr>`).join('');
+  $('#wcsTable').innerHTML = head + `<tbody>${rows}</tbody>`;
+}
+function activeWcs() { return state.wcs.find((w) => w.p === state.wcsActiveP) || state.wcs[0]; }
+
+function applyWcs() {
+  const lines = state.wcs.map(wcsToG10);
+  if (grbl.connected) { for (const l of lines) grbl.send(l); logSys(`${lines.length} décalages pièce → grblHAL (G10 L2).`, 'ok'); }
+  else { $('#gcode').value = ['; Décalages pièce — G10 L2', ...lines, ''].join('\n'); logSys(`Hors ligne : ${lines.length} lignes G10 L2 générées.`, 'sys'); }
+  flash($('#wcsApply'));
+}
+function wcsFromDro() {
+  if (!grbl.connected) return logSys('Machine non connectée.', 'err');
+  const w = activeWcs(); const d = droVec();
+  w.x = round3(d.x); w.y = round3(d.y); w.z = round3(d.z);
+  saveWcs(state.wcs); renderWcs();
+  logSys(`${w.code} ← position (${w.x}, ${w.y}, ${w.z}).`, 'ok');
+}
+function wcsZeroHere() {
+  const w = activeWcs();
+  if (grbl.connected) { grbl.send(wcsSetHere(w, 0, 0, 0)); logSys(`${w.code} : position courante = origine (G10 L20 P${w.p}).`, 'ok'); }
+  else logSys('Connecte la machine pour « Zéro ici ».', 'err');
+}
+function wcsActivate() {
+  const w = activeWcs();
+  if (grbl.connected) { grbl.send(w.code); logSys(`Repère actif → ${w.code}.`, 'ok'); }
+  else logSys(`Hors ligne : ${w.code} serait activé.`, 'sys');
+}
+function round3(v) { return Math.round(v * 1000) / 1000; }
+function fmtn(v) { const n = +v; return Number.isFinite(n) ? String(round3(n)) : '0'; }
 
 // ---------- selects ----------
 function populateSelects() {
@@ -322,14 +396,39 @@ function bindGcode() {
   $('#btnGenerate').addEventListener('click', generateGcode);
   $('#btnOpenFile').addEventListener('click', () => $('#fileInput').click());
   $('#fileInput').addEventListener('change', openFile);
+  $('#btnImportDxf').addEventListener('click', () => $('#fileDxf').click());
+  $('#fileDxf').addEventListener('change', openDxf);
   $('#btnStream').addEventListener('click', streamGcode);
+}
+
+// Import a real 2D profile from a DXF and load it as the nominal contour.
+function openDxf(e) {
+  const file = e.target.files[0]; if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const { polylines, bounds, count } = parseDXF(String(reader.result));
+      if (!count) { logSys('DXF : aucun profil fermé trouvé (LINE/ARC/LWPOLYLINE/CIRCLE).', 'err'); return; }
+      const main = largestLoop(polylines);
+      state.contour = main;
+      state.contours = polylines;
+      state.toolPaths = []; state.machined = []; state.rapids = [];
+      viz.setScene({ contour: main, contours: polylines, toolPaths: [], machined: [], rapids: [], toolRadius: effRadius(activeTool()) });
+      viz.fit(); hideBadge();
+      $('#gcode').value = profileGcode(main);
+      $('#inspectOut').innerHTML = `<span class="muted">DXF chargé : ${count} profil(s), cadre ${bounds.w.toFixed(1)} × ${bounds.h.toFixed(1)} mm. Le plus grand contour est compensable.</span>`;
+      logSys(`DXF « ${file.name} » : ${count} profil(s), ${bounds.w.toFixed(1)}×${bounds.h.toFixed(1)} mm.`, 'ok');
+    } catch (err) { logSys('DXF illisible : ' + (err.message || err), 'err'); }
+  };
+  reader.readAsText(file);
+  e.target.value = '';
 }
 
 function loadDemo() {
   state.contour = demoContour('bracket');
-  state.toolPaths = []; state.machined = [];
+  state.contours = []; state.toolPaths = []; state.machined = [];
   const b = polyBounds([state.contour]);
-  viz.setScene({ contour: state.contour, toolPaths: [], rapids: [], machined: [], toolRadius: effRadius(activeTool()) });
+  viz.setScene({ contour: state.contour, contours: [], toolPaths: [], rapids: [], machined: [], toolRadius: effRadius(activeTool()) });
   viz.fit(); hideBadge();
   $('#gcode').value = profileGcode(state.contour);
   $('#inspectOut').innerHTML = `<span class="muted">Profil chargé : ${b.w.toFixed(1)} × ${b.h.toFixed(1)} mm. Lance « Compenser » puis « Contrôler ».</span>`;
@@ -498,6 +597,7 @@ function bindMenus() {
 }
 function menuAct(act) {
   switch (act) {
+    case 'import-dxf': $('#fileDxf').click(); break;
     case 'open-gcode': $('#fileInput').click(); break;
     case 'save-gcode': download('program.nc', $('#gcode').value); break;
     case 'export-tools': download('tools.json', JSON.stringify(state.tools, null, 2)); break;

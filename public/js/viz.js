@@ -7,7 +7,7 @@ export class Viz {
     this.cv = canvas;
     this.ctx = canvas.getContext('2d');
     this.scale = 4; this.ox = 0; this.oy = 0;     // world→screen
-    this.scene = { contour: [], toolPaths: [], rapids: [], machined: [], toolRadius: 3 };
+    this.scene = { contour: [], contours: [], toolPaths: [], rapids: [], machined: [], toolRadius: 3 };
     this.sim = null;                               // {polys, seg, t, playing, pos}
     this.dpr = Math.max(1, window.devicePixelRatio || 1);
     this._bindPointer();
@@ -28,6 +28,7 @@ export class Viz {
   fit() {
     const pts = [
       ...flat(this.scene.contour ? [this.scene.contour] : []),
+      ...flat(this.scene.contours || []),
       ...flat(this.scene.toolPaths || []),
       ...flat(this.scene.machined || []),
     ];
@@ -60,7 +61,9 @@ export class Viz {
     this._polys(this.scene.rapids, { color: 'rgba(120,120,120,0.55)', width: 1, dash: [6, 5] });
     // machined boundary (inspection)
     if (this.scene.machined && this.scene.machined.length) this._polys(this.scene.machined, { color: 'rgba(23,130,60,0.9)', width: 1.6, close: true });
-    // nominal contour
+    // extra nominal loops (e.g. all DXF profiles / holes)
+    if (this.scene.contours && this.scene.contours.length) this._polys(this.scene.contours, { color: 'rgba(22,104,192,0.5)', width: 1.4, close: true });
+    // nominal contour (the one being compensated)
     if (this.scene.contour && this.scene.contour.length) this._polys([this.scene.contour], { color: '#1668c0', width: 2, close: true });
     // tool-centre compensated path
     this._polys(this.scene.toolPaths, { color: '#d9770b', width: 2, close: true });
