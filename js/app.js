@@ -170,8 +170,11 @@ function selectTool(id) {
 function readEditor() {
   const t = state.tools.find((x) => x.id === state.activeId);
   if (!t) return null;
+  // Spread the existing tool first so table-only fields (pocket, xOffset, tipDir,
+  // fluteLen, note) survive an edit made from this compact left-panel form.
   Object.assign(t, mkTool({
-    id: t.id, name: $('#tName').value, type: $('#tType').value, material: $('#tMat').value,
+    ...t,
+    name: $('#tName').value, type: $('#tType').value, material: $('#tMat').value,
     dia: $('#tDia').value, flutes: $('#tFlutes').value,
     radiusGeom: $('#tRadGeom').value, radiusWear: $('#tRadWear').value,
     lenGeom: $('#tLenGeom').value, lenWear: $('#tLenWear').value,
