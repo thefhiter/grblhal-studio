@@ -28,7 +28,7 @@ grblHAL gère nativement la **correction de longueur** d'outil (`G43 H`, palpage
 | **Évidement de poche** | Ébauche par passes concentriques (offsets successifs vers l'intérieur au pas radial *ae*), centre→bord, gestion des poches à étranglement. Option « Opération → Poche ». |
 | **Décalages pièce** | Éditeur **G54–G59** (repères d'origine pièce) : X/Y/Z éditables, *Position → décalage* (depuis le DRO), *Zéro ici* (`G10 L20`), *Activer*, *Appliquer* (`G10 L2`). Un décalage pièce décale **tous** les outils — le pendant du décalage d'outil (cf. tip Haas). |
 | **Contrôle des pièces** | Reconstruit la paroi usinée depuis la trajectoire, compare aux cotes nominales, verdict tolérance. |
-| **Simulation** | Animation de l'outil le long de la trajectoire (top view), pan/zoom. |
+| **Simulation d'usinage (PC)** | Vraie **simulation d'enlèvement de matière** : l'outil (disque au rayon réel) parcourt sa **trajectoire réelle** (G41/G42 résolus) et **creuse un bloc de brut** → la **pièce obtenue** apparaît avec les traces d'outil (spirale de poche, balayage), la **pièce voulue** est surimposée en vert. Bouton « Simuler ». |
 | **Contrôleur** | Dialogue de connexion type **ioSender** (onglets Série / Réseau, port, baud, action *on connect*). Web Serial → grblHAL : DRO, jog, home/unlock, cycle start / feed-hold / soft-reset, arrêt d'urgence, console, streaming avec contrôle de flux `ok`. |
 
 ## Référence : réglage manuel des outils (tour)
