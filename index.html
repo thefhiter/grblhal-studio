@@ -40,6 +40,7 @@
   <nav class="menu" id="menu">
     <div class="menu-item" data-menu="file">File
       <div class="dropdown">
+        <button data-act="import-dxf">Importer un profil DXF…</button>
         <button data-act="open-gcode">Ouvrir G-code…</button>
         <button data-act="save-gcode">Enregistrer G-code</button>
         <hr><button data-act="export-tools">Exporter outils (JSON)</button>
@@ -189,7 +190,12 @@
     </section>
 
     <section class="panel">
-      <div class="panel-h"><h2>Position</h2><span class="pill mono" id="mcState">—</span></div>
+      <div class="panel-h"><h2>Position</h2>
+        <div class="ph-actions">
+          <button class="btn xs" id="btnWcs" title="Décalages pièce G54–G59">WCS</button>
+          <span class="pill mono" id="mcState">—</span>
+        </div>
+      </div>
       <div class="dro" id="dro">
         <div class="dro-row"><span class="ax">X</span><span class="val" id="droX">0.000</span><button class="z0" data-zero="X">0</button></div>
         <div class="dro-row"><span class="ax">Y</span><span class="val" id="droY">0.000</span><button class="z0" data-zero="Y">0</button></div>
@@ -231,6 +237,7 @@
   <div class="gc-head">
     <h2>G-code</h2>
     <div class="gc-actions">
+      <button class="btn xs" id="btnImportDxf"><svg class="ic"><use href="#i-down"/></svg> Importer DXF</button>
       <button class="btn xs" id="btnLoadDemo">Géométrie démo</button>
       <button class="btn xs" id="btnGenerate">Générer depuis comp.</button>
       <button class="btn xs" id="btnOpenFile">Ouvrir…</button>
@@ -244,6 +251,7 @@
 
 <input type="file" id="fileInput" accept=".nc,.gcode,.txt,.tap,.cnc" hidden />
 <input type="file" id="fileTools" accept=".json,.csv" hidden />
+<input type="file" id="fileDxf" accept=".dxf" hidden />
 
 <!-- ===== Tool-correction table modal (gmoccapy-style editable grid) ===== -->
 <div class="modal-back" id="ttBack" hidden>
@@ -286,6 +294,32 @@
     <div class="tip-head">Direction de pointe d'outil</div>
     <div class="tip-grid" id="tipGrid"></div>
     <div class="tip-legend">Position du nez d'outil imaginaire · centre = sur l'axe (foret / fraise)</div>
+  </div>
+</div>
+
+<!-- ===== Work-offsets (G54–G59) modal ===== -->
+<div class="modal-back" id="wcsBack" hidden>
+  <div class="modal modal-wcs" role="dialog" aria-label="Décalages pièce">
+    <header class="modal-head">
+      <div class="mh-title"><svg class="ic"><use href="#i-target"/></svg><h2>Décalages pièce — G54…G59</h2></div>
+      <span class="grow"></span>
+      <span class="mh-hint">Un décalage pièce décale <b>tous</b> les outils à la fois (G54 = OP 1, G55 = OP 2…).</span>
+      <button class="modal-x" id="wcsClose" title="Fermer">✕</button>
+    </header>
+    <div class="modal-body">
+      <div class="tt-scroll"><table class="tt" id="wcsTable"></table></div>
+    </div>
+    <footer class="modal-foot">
+      <div class="foot-group touch">
+        <span class="fg-label"><svg class="ic"><use href="#i-target"/></svg> Actif</span>
+        <button class="btn sm" id="wcsFromDro" title="Copier la position machine courante dans le décalage sélectionné">Position → décalage</button>
+        <button class="btn sm" id="wcsZeroHere" title="Mettre la position courante à X0 Y0 Z0 dans ce repère (G10 L20)">Zéro ici</button>
+        <button class="btn sm" id="wcsActivate" title="Activer ce repère sur la machine">Activer</button>
+      </div>
+      <span class="grow"></span>
+      <div class="lathe-hint"><code>G10 L2 P… X Y Z</code></div>
+      <button class="btn btn-primary" id="wcsApply"><svg class="ic"><use href="#i-up"/></svg> Appliquer → grblHAL</button>
+    </footer>
   </div>
 </div>
 
