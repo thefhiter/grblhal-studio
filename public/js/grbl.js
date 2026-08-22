@@ -21,6 +21,7 @@ export class GrblDriver extends EventTarget {
     this._statusTimer = null;
     this.state = { status: 'Disconnected', mpos: [0, 0, 0], wpos: [0, 0, 0], feed: 0, spindle: 0 };
     this.stats = { sent: 0, total: 0 };
+    this.settings = {};      // grblHAL $-settings, e.g. { '130': 300, '20': 1 } (from $$)
   }
 
   get supported() { return 'serial' in navigator; }
@@ -88,6 +89,9 @@ export class GrblDriver extends EventTarget {
     if (line[0] === '<' && line.endsWith('>')) { this._parseStatus(line); return; }
     if (line === 'ok') { this._ack(false); return; }
     if (line.startsWith('error') || line.startsWith('ALARM')) { this._ack(true, line); }
+    // $-setting line from a $$ dump, e.g. "$130=300.000"
+    const sm = line.match(/^\$(\d+)\s*=\s*(-?[\d.]+)/);
+    if (sm) { this.settings[sm[1]] = parseFloat(sm[2]); this.emit('setting', { n: sm[1], value: this.settings[sm[1]] }); }
     this.emit('line', { line });
   }
 
@@ -159,6 +163,8 @@ export class GrblDriver extends EventTarget {
   jogCancel() { this.realtime(RT.JOG_CANCEL); }
   home() { this.send('$H'); }
   unlock() { this.send('$X'); }
+  querySettings() { this.send('$$'); }                       // dump all $-settings
+  writeSetting(n, v) { this.send(`$${n}=${v}`); this.settings[String(n)] = parseFloat(v); }
   zeroWork(axes = 'XYZ') {
     const map = { X: 'X0', Y: 'Y0', Z: 'Z0' };
     this.send('G10 L20 P1 ' + [...axes].map((a) => map[a]).join(' '));

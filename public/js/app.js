@@ -1,6 +1,6 @@
 // app.js — wires the cockpit together.
 import { MATERIALS, STRATEGY } from './materials.js';
-import { TOOL_TYPES, TIP_DIRS, loadTools, saveTools, mkTool, effRadius, effDia, effLength, toolToG10, nextToolId, toolsToCSV, csvToTools } from './tools.js';
+import { TOOL_TYPES, TIP_DIRS, loadTools, saveTools, mkTool, effRadius, effDia, effLength, toolToG10, nextToolId, toolsToCSV, csvToTools, toolDeclGcode } from './tools.js';
 import { computeCutting } from './feeds.js';
 import { parseGcode, compensate, pocketClear, resolveCutterComp, resolveToolPath, partFromRegions, polysToGcode, demoContour, polyBounds, pathLength } from './geometry.js';
 import { inspect } from './inspect.js';
@@ -58,6 +58,9 @@ window.addEventListener('DOMContentLoaded', () => {
   initToolTable();
   bindConnDialog();
   initWcs();
+  initPlate();
+  initToolDecl();
+  initLimits();
   bindResizers();
   loadDemo();
   logSys('Prêt. Connecte la machine (Chrome/Edge) ou explore la CAO.');
@@ -91,6 +94,13 @@ function initToolTable() {
   $('#btnOpenTable2').addEventListener('click', () => toolTable.open());
   $('#ttExport').addEventListener('click', exportToolsCSV);
   $('#ttImport').addEventListener('click', () => $('#fileTools').click());
+
+  // near-fullscreen maximize / restore toggle (default: maximized, remembered)
+  const ttModal = $('#ttBack .modal');
+  const TT_MAX_KEY = 'grblhal-studio.tt.max.v1';
+  const applyTtMax = (on) => { ttModal.classList.toggle('is-max', on); try { localStorage.setItem(TT_MAX_KEY, on ? '1' : '0'); } catch (_) {} };
+  $('#ttMax').addEventListener('click', () => applyTtMax(!ttModal.classList.contains('is-max')));
+  applyTtMax(localStorage.getItem(TT_MAX_KEY) !== '0');
 }
 
 // Extract the full declared tool table as a CSV spreadsheet.
@@ -146,6 +156,179 @@ async function loadSampleComp() {
     state.compRadiusOverride = null; hadPaths = false; liveTrace();
     logSys('Exemple 1001.nc chargé — G41/G42 résolu en direct.', 'ok');
   } catch (err) { logSys('Impossible de charger l\'exemple : ' + (err.message || err), 'err'); }
+}
+
+// ---------- 3D build plate (embedded cnc-plate-studio, same-origin iframe) ----------
+let plateReady = false;
+function initPlate() {
+  $$('#vizMode button').forEach((b) => b.addEventListener('click', () => setVizMode(b.dataset.view)));
+  $('#btnPlateReload').addEventListener('click', () => plateLoad(true));
+}
+function setVizMode(view) {
+  const is3d = view === '3d';
+  $$('#vizMode button').forEach((b) => b.classList.toggle('is-active', b.dataset.view === view));
+  $('#vizToolbar').classList.toggle('mode-3d', is3d);
+  const f = $('#plateFrame');
+  f.hidden = !is3d;
+  if (is3d) {
+    if (!f.getAttribute('src')) {
+      f.addEventListener('load', () => { plateReady = true; plateLoad(false); pushSpindle(); }, { once: true });
+      f.setAttribute('src', '/plate/?embedded');           // served same-origin at /plate by server.js
+      logSys('Plateau 3D — chargement de la vue…', 'sys');
+    } else { plateLoad(false); pushSpindle(); }
+  } else if (viz) { viz.resize(); }
+}
+function plateWin() { const f = $('#plateFrame'); return (plateReady && f && f.contentWindow) ? f.contentWindow : null; }
+// Push the editor's G-code onto the plate via the hook it exposes for host apps.
+function plateLoad(announce) {
+  const w = plateWin(); if (!w || typeof w.plateStudioLoadGcode !== 'function') return;
+  const text = $('#gcode').value;
+  if (!text.trim()) { if (announce) logSys('Éditeur G-code vide — rien à charger sur le plateau.', 'sys'); return; }
+  try { w.plateStudioLoadGcode(text, 'grblhal-studio.nc'); if (announce) logSys('G-code chargé sur le plateau 3D.', 'ok'); }
+  catch (e) { logSys('Plateau 3D : chargement impossible (' + (e.message || e) + ').', 'err'); }
+}
+function pushSpindle() {
+  const w = plateWin(); if (!w || !grbl.connected || typeof w.plateStudioSetSpindlePos !== 'function') return;
+  const d = droVec();
+  try { w.plateStudioSetSpindlePos(d.x, d.y, d.z); } catch (_) {}
+}
+// Called after a program is (re)loaded — keeps the plate in sync when it's visible.
+function plateAutoSync() { if (!$('#plateFrame').hidden) plateLoad(false); }
+
+// ---------- tool-declaration G-code generator ----------
+function initToolDecl() {
+  $('#tdClose').addEventListener('click', () => ($('#tdBack').hidden = true));
+  $('#tdBack').addEventListener('mousedown', (e) => { if (e.target === $('#tdBack')) $('#tdBack').hidden = true; });
+  $$('#tdSide button').forEach((b) => b.addEventListener('click', () => {
+    $$('#tdSide button').forEach((x) => x.classList.toggle('is-active', x === b));
+    tdPreview();
+  }));
+  ['#tdId', '#tdDia', '#tdLen', '#tdW', '#tdH', '#tdRpm'].forEach((s) => $(s).addEventListener('input', tdPreview));
+  $('#tdActiveFromTool').addEventListener('click', tdFromActive);
+  $('#tdInsert').addEventListener('click', tdInsert);
+  $('#tdCopy').addEventListener('click', () => {
+    const g = tdBuild();
+    if (navigator.clipboard) navigator.clipboard.writeText(g).then(() => { flash($('#tdCopy')); logSys('Déclaration copiée dans le presse-papiers.', 'ok'); }).catch(() => {});
+  });
+}
+function openToolDecl() {
+  tdFromActive();
+  const side = $('#compSide').value === 'inside' ? 'interior' : 'exterior';   // follow the viz operation control
+  $$('#tdSide button').forEach((x) => x.classList.toggle('is-active', x.dataset.side === side));
+  $('#tdBack').hidden = false;
+  tdPreview();
+}
+function tdFromActive() {
+  const t = activeTool(); if (!t) return;
+  $('#tdId').value = t.id;
+  $('#tdDia').value = +effDia(t).toFixed(3);
+  $('#tdLen').value = +effLength(t).toFixed(3);
+  tdPreview();
+}
+function tdOpts() {
+  const sideBtn = $('#tdSide .is-active');
+  const id = Math.max(1, Math.round(parseFloat($('#tdId').value) || 1));
+  const named = state.tools.find((x) => x.id === id);
+  return {
+    id, dia: parseFloat($('#tdDia').value) || 6, length: parseFloat($('#tdLen').value) || 0,
+    side: sideBtn ? sideBtn.dataset.side : 'exterior',
+    width: parseFloat($('#tdW').value) || 70, height: parseFloat($('#tdH').value) || 50,
+    rpm: parseFloat($('#tdRpm').value) || 12000,
+    feed: Math.round(state.feed) || 600, plunge: state.plunge, safeZ: state.safeZ, cutZ: state.cutZ,
+    name: named ? named.name : '',
+  };
+}
+function tdBuild() { return toolDeclGcode(tdOpts()); }
+function tdPreview() { $('#tdPreview').textContent = tdBuild(); }
+function tdInsert() {
+  const o = tdOpts();
+  const g = toolDeclGcode(o);
+  const ed = $('#gcode');
+  if ($('#tdReplace').checked || !ed.value.trim()) ed.value = g;
+  else ed.value = ed.value.replace(/\s*$/, '') + '\n\n' + g;
+  $('#tdBack').hidden = true;
+  state.compRadiusOverride = null; hadPaths = false; liveTrace();      // render + resolve the G41/G42 program live
+  logSys(`Déclaration T${o.id} générée — Ø${o.dia} · L${o.length} · ${o.side === 'exterior' ? 'G42 extérieur' : 'G41 intérieur'}.`, 'ok');
+}
+
+// ---------- axis limits / travel ($130-$132, $20, $21) ----------
+const LIMITS_KEY = 'grblhal-studio.limits.v1';
+const LIM_AXES = [{ k: 'x', ax: 'X', s: '130' }, { k: 'y', ax: 'Y', s: '131' }, { k: 'z', ax: 'Z', s: '132' }];
+function loadLimits() {
+  try { const j = JSON.parse(localStorage.getItem(LIMITS_KEY) || 'null'); if (j) return Object.assign({ x: 300, y: 300, z: 100, soft: false, hard: false }, j); } catch (_) {}
+  return { x: 300, y: 300, z: 100, soft: false, hard: false };
+}
+function saveLimits() { try { localStorage.setItem(LIMITS_KEY, JSON.stringify(state.limits)); } catch (_) {} }
+function initLimits() {
+  state.limits = loadLimits();
+  $('#limClose').addEventListener('click', () => ($('#limBack').hidden = true));
+  $('#limBack').addEventListener('mousedown', (e) => { if (e.target === $('#limBack')) $('#limBack').hidden = true; });
+  $('#limRead').addEventListener('click', limRead);
+  $('#limApply').addEventListener('click', limApply);
+  $('#limSoft').addEventListener('change', (e) => { state.limits.soft = e.target.checked; saveLimits(); });
+  $('#limHard').addEventListener('change', (e) => { state.limits.hard = e.target.checked; saveLimits(); });
+  const t = $('#limTable');
+  t.addEventListener('input', (e) => { const k = e.target.dataset.k; if (!k) return; state.limits[k] = parseFloat(e.target.value) || 0; saveLimits(); });
+  t.addEventListener('click', (e) => { const cap = e.target.closest('[data-cap]'); if (cap) limCapture(cap.dataset.cap); });
+  grbl.addEventListener('setting', (e) => { if (!$('#limBack').hidden) limApplySetting(e.detail); });
+}
+function openLimits() {
+  $('#limBack').hidden = false;
+  renderLimits();
+  updateLimNote();
+  if (grbl.connected) { logSys('Lecture des limites depuis grblHAL ($$)…', 'sys'); grbl.querySettings(); }
+}
+function renderLimits() {
+  const L = state.limits;
+  const head = `<thead><tr><th style="width:54px">Axe</th><th>Course max <i>mm</i></th><th style="width:158px">Depuis la machine</th></tr></thead>`;
+  const rows = LIM_AXES.map((a) => `<tr>
+    <td class="c-axis">${a.ax}</td>
+    <td class="c-num"><input class="tt-in" type="number" step="0.001" min="0" value="${fmtn(L[a.k])}" data-k="${a.k}" title="$${a.s} — course max ${a.ax}"></td>
+    <td><button class="lim-cap" data-cap="${a.k}" title="Copier |position machine ${a.ax}| courante comme course max ($${a.s})">Position ${a.ax} → limite</button></td>
+  </tr>`).join('');
+  $('#limTable').innerHTML = head + `<tbody>${rows}</tbody>`;
+  $('#limSoft').checked = !!L.soft;
+  $('#limHard').checked = !!L.hard;
+}
+function limCapture(k) {
+  if (!grbl.connected) return logSys('Machine non connectée — pas de position à capturer.', 'err');
+  const mp = grbl.state.mpos || [0, 0, 0];
+  const v = round3(Math.abs(mp[{ x: 0, y: 1, z: 2 }[k]] || 0));
+  state.limits[k] = v; saveLimits(); renderLimits();
+  logSys(`Course max ${k.toUpperCase()} ← |position machine| = ${v} mm.`, 'ok');
+}
+function limRead() {
+  if (!grbl.connected) return logSys('Connecte la machine pour lire les réglages ($$).', 'err');
+  logSys('Lecture des réglages grblHAL ($$)…', 'sys');
+  grbl.querySettings();
+}
+function limApplySetting({ n, value }) {
+  const map = { '130': 'x', '131': 'y', '132': 'z' };
+  if (map[n]) {
+    state.limits[map[n]] = value; saveLimits();
+    const inp = $(`#limTable .tt-in[data-k="${map[n]}"]`);
+    if (inp && document.activeElement !== inp) inp.value = fmtn(value);
+  } else if (n === '20') { state.limits.soft = !!value; $('#limSoft').checked = !!value; saveLimits(); }
+  else if (n === '21') { state.limits.hard = !!value; $('#limHard').checked = !!value; saveLimits(); }
+}
+function limApply() {
+  const L = state.limits;
+  const pairs = [['130', fmtn(L.x)], ['131', fmtn(L.y)], ['132', fmtn(L.z)], ['20', L.soft ? '1' : '0'], ['21', L.hard ? '1' : '0']];
+  if (grbl.connected) {
+    pairs.forEach(([n, v]) => grbl.writeSetting(n, v));
+    logSys(`Limites → grblHAL : X${fmtn(L.x)} Y${fmtn(L.y)} Z${fmtn(L.z)} mm · soft ${L.soft ? 'ON' : 'off'} · hard ${L.hard ? 'ON' : 'off'}.`, 'ok');
+  } else {
+    pairs.forEach(([n, v]) => logLine(`$${n}=${v}`, 'tx'));
+    logSys('Hors ligne : réglages $ ci-dessus (connecte la machine pour les écrire).', 'sys');
+  }
+  flash($('#limApply'));
+}
+function updateLimNote() {
+  const n = $('#limNote');
+  n.classList.toggle('warn', !grbl.connected);
+  n.textContent = grbl.connected
+    ? 'En ligne : « Lire ($$) » relit les valeurs réelles ; « Appliquer » écrit $130–$132, $20, $21. « Position → limite » capture |MPos|.'
+    : 'Machine non connectée — édition hors ligne (sauvegardée localement). Connecte pour lire ($$) et écrire les réglages.';
 }
 
 // ---------- resizable panels (splitters) ----------
@@ -607,6 +790,7 @@ function liveTrace() {
   if (state.editMode) viz.updateHandles(buildHandles());
   editorStats(p);
   cursorHighlight();
+  plateAutoSync();
 }
 
 // Comp radius: a user override wins, else a "D=<diameter>" hint, else the active tool.
@@ -720,6 +904,7 @@ function metaRefresh() {
   hadPaths = p.moves.length > 0;
   editorStats(p);
   refreshGutter();
+  plateAutoSync();
 }
 
 function editorStats(p) {
@@ -942,6 +1127,7 @@ function renderState(s) {
   const st = $('#mcState'); st.textContent = s.status;
   const cls = /Run|Jog|Home/.test(s.status) ? 'busy' : /Alarm|Error/.test(s.status) ? 'err' : /Idle/.test(s.status) ? 'on' : '';
   $('#connDot').className = 'status-dot ' + (grbl.connected ? (cls || 'on') : '');
+  if (!$('#plateFrame').hidden) pushSpindle();
 }
 function doJog(dir) {
   if (!grbl.connected) return logSys('Machine non connectée.', 'err');
@@ -978,8 +1164,10 @@ function menuAct(act) {
     case 'set-rpm': ask('RPM max broche', state.rpmMax, (v) => { state.rpmMax = +v || state.rpmMax; $('#fRpmMax').value = state.rpmMax; computeFeeds(); }); break;
     case 'set-tol': ask('Tolérance de contrôle (mm)', state.tol, (v) => { state.tol = +v || state.tol; }); break;
     case 'set-cutz': ask('Z de coupe (mm)', state.cutZ, (v) => { state.cutZ = parseFloat(v); }); break;
+    case 'axis-limits': openLimits(); break;
     case 'open-tooltable': toolTable.open(); break;
     case 'add-tool': addTool(); break;
+    case 'tool-decl': openToolDecl(); break;
     case 'push-tools': pushTools(); break;
     case 'reset-tools': localStorage.removeItem('grblhal-studio.tools.v1'); state.tools = loadTools(); selectTool(state.tools[0].id); renderToolList(); refreshCompToolSelect(); refreshTableIfOpen(); break;
     case 'ins-G0': insG('G0 X0 Y0'); break;

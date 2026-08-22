@@ -29,6 +29,8 @@
   <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L18 10l-4-4L4 16v4z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M13.5 6.5l4 4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
   <symbol id="i-table" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M3 9h18M3 14h18M9 4v16M15 4v16" stroke="currentColor" stroke-width="1.4"/></symbol>
   <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/></symbol>
+  <symbol id="i-cube" viewBox="0 0 24 24"><path d="M12 2.5l8.5 4.75v9.5L12 21.5l-8.5-4.75v-9.5L12 2.5z M12 12l8.5-4.75M12 12v9.5M12 12L3.5 7.25" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></symbol>
+  <symbol id="i-ruler" viewBox="0 0 24 24"><rect x="2.5" y="7" width="19" height="10" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M7 7v3.5M12 7v5M17 7v3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
 </svg>
 
 <!-- ===== Top bar ===== -->
@@ -60,12 +62,14 @@
         <button data-act="set-rpm">RPM max broche…</button>
         <button data-act="set-tol">Tolérance contrôle…</button>
         <button data-act="set-cutz">Z de coupe / Z sûr…</button>
+        <hr><button data-act="axis-limits">Limites &amp; courses des axes…</button>
       </div>
     </div>
     <div class="menu-item" data-menu="tools">Tools
       <div class="dropdown">
         <button data-act="open-tooltable">Table de correction d'outil…</button>
         <button data-act="add-tool">Ajouter un outil</button>
+        <button data-act="tool-decl">Générer déclaration d'outil (G-code)…</button>
         <hr><button data-act="push-tools">Pousser la table → grblHAL</button>
         <button data-act="reset-tools">Réinitialiser la table</button>
       </div>
@@ -151,7 +155,12 @@
 
   <!-- CENTER: viz + inspection -->
   <section class="col col-center">
-    <div class="viz-toolbar">
+    <div class="viz-toolbar" id="vizToolbar">
+      <div class="seg viz-mode" id="vizMode" title="Basculer entre la vue CAO 2D et le plateau 3D">
+        <button data-view="2d" class="is-active">2D</button>
+        <button data-view="3d"><svg class="ic"><use href="#i-cube"/></svg> Plateau 3D</button>
+      </div>
+      <span class="sep"></span>
       <button class="btn sm" id="btnFit"><svg class="ic"><use href="#i-fit"/></svg> Ajuster</button>
       <span class="sep"></span>
       <label class="inline">Outil comp
@@ -171,10 +180,14 @@
       <button class="btn sm" id="btnEdit" title="Glisser les points bleus pour déplacer la géométrie"><svg class="ic"><use href="#i-edit"/></svg> Éditer</button>
       <span class="grow"></span>
       <span class="legend"><i class="dot dot-part"></i>pièce <i class="dot dot-tool"></i>trajectoire <i class="dot dot-mach"></i>usiné <i class="dot dot-rapid"></i>rapide</span>
+      <span class="only-3d plate-note mono" id="plateHint">Plateau 3D — le G-code de l'éditeur y est chargé automatiquement.</span>
+      <span class="grow only-3d"></span>
+      <button class="btn sm only-3d" id="btnPlateReload" title="Recharger le G-code de l'éditeur sur le plateau"><svg class="ic"><use href="#i-up"/></svg> Recharger le G-code</button>
     </div>
     <div class="viz-wrap">
       <canvas id="view"></canvas>
       <div class="viz-badge" id="vizBadge">Charge un G-code ou une géométrie de démonstration</div>
+      <iframe id="plateFrame" class="plate-frame" title="Plateau 3D" hidden></iframe>
     </div>
     <div class="inspect-bar" id="inspectBar">
       <div class="insp-title">Contrôle des pièces</div>
@@ -277,7 +290,7 @@ G1 X0 Y0"></textarea>
 
 <!-- ===== Tool-correction table modal (gmoccapy-style editable grid) ===== -->
 <div class="modal-back" id="ttBack" hidden>
-  <div class="modal modal-wide" role="dialog" aria-label="Table de correction d'outil">
+  <div class="modal modal-wide tt-modal is-max" role="dialog" aria-label="Table de correction d'outil">
     <header class="modal-head">
       <div class="mh-title"><svg class="ic"><use href="#i-table"/></svg><h2>Correction d'outil — table</h2></div>
       <div class="seg" id="ttMode" title="Fraisage : Z + rayon. Tournage : ajoute X (Ø) + direction de pointe.">
@@ -286,6 +299,7 @@ G1 X0 Y0"></textarea>
       </div>
       <span class="grow"></span>
       <span class="mh-hint">Édite un nombre → il est pris en compte immédiatement. « Appliquer » pousse la table à grblHAL.</span>
+      <button class="modal-x" id="ttMax" title="Agrandir / réduire la table"><svg class="ic"><use href="#i-fit"/></svg></button>
       <button class="modal-x" id="ttClose" title="Fermer">✕</button>
     </header>
     <div class="modal-body">
@@ -341,6 +355,72 @@ G1 X0 Y0"></textarea>
       <span class="grow"></span>
       <div class="lathe-hint"><code>G10 L2 P… X Y Z</code></div>
       <button class="btn btn-primary" id="wcsApply"><svg class="ic"><use href="#i-up"/></svg> Appliquer → grblHAL</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ===== Tool-declaration G-code generator modal ===== -->
+<div class="modal-back" id="tdBack" hidden>
+  <div class="modal modal-td" role="dialog" aria-label="Déclaration d'outil">
+    <header class="modal-head">
+      <div class="mh-title"><svg class="ic"><use href="#i-comp"/></svg><h2>Déclaration d'outil → G-code</h2></div>
+      <span class="grow"></span>
+      <span class="mh-hint">Déclare Ø + longueur, change l'outil (G43 H) et applique la comp (G41/G42). Les détails s'affichent dans ioSender.</span>
+      <button class="modal-x" id="tdClose" title="Fermer">✕</button>
+    </header>
+    <div class="modal-body td-body">
+      <div class="td-form">
+        <div class="td-grid">
+          <div class="field"><label>Outil (T#)</label><input id="tdId" type="number" step="1" min="1" value="1"></div>
+          <div class="field"><label>Ø diamètre <i>mm</i></label><input id="tdDia" type="number" step="0.001" value="6"></div>
+          <div class="field"><label>L longueur <i>mm</i></label><input id="tdLen" type="number" step="0.001" value="48.15"></div>
+          <div class="field span2"><label>Côté de compensation</label>
+            <div class="seg wfull" id="tdSide">
+              <button data-side="exterior" class="is-active">Extérieur → G42</button>
+              <button data-side="interior">Intérieur → G41</button>
+            </div>
+          </div>
+          <div class="field"><label>Largeur profil <i>mm</i></label><input id="tdW" type="number" step="0.1" value="70"></div>
+          <div class="field"><label>Hauteur profil <i>mm</i></label><input id="tdH" type="number" step="0.1" value="50"></div>
+          <div class="field"><label>Broche <i>rpm</i></label><input id="tdRpm" type="number" step="100" value="12000"></div>
+        </div>
+        <button class="btn xs full mt6" id="tdActiveFromTool" title="Reprendre le Ø et la longueur de l'outil actif">Reprendre depuis l'outil actif</button>
+      </div>
+      <div class="td-preview"><div class="tp-label">Aperçu du G-code</div><pre id="tdPreview" class="tp-code"></pre></div>
+    </div>
+    <footer class="modal-foot">
+      <label class="td-target"><input type="checkbox" id="tdReplace" checked> Remplacer le contenu de l'éditeur</label>
+      <span class="grow"></span>
+      <button class="btn sm" id="tdCopy" title="Copier le G-code dans le presse-papiers">Copier</button>
+      <button class="btn btn-primary" id="tdInsert"><svg class="ic"><use href="#i-check"/></svg> Générer dans l'éditeur</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ===== Axis limits / travel modal ===== -->
+<div class="modal-back" id="limBack" hidden>
+  <div class="modal modal-lim" role="dialog" aria-label="Limites des axes">
+    <header class="modal-head">
+      <div class="mh-title"><svg class="ic"><use href="#i-ruler"/></svg><h2>Limites &amp; courses des axes</h2></div>
+      <span class="grow"></span>
+      <span class="mh-hint">Course max = $130/$131/$132. « Position → limite » capture la position machine courante.</span>
+      <button class="modal-x" id="limClose" title="Fermer">✕</button>
+    </header>
+    <div class="modal-body">
+      <div class="tt-scroll"><table class="tt" id="limTable"></table></div>
+      <div class="lim-toggles">
+        <label><input type="checkbox" id="limSoft"> <b>Soft limits</b> <code>$20</code> — arrêt logiciel avant la course max (exige la prise d'origine)</label>
+        <label><input type="checkbox" id="limHard"> <b>Hard limits</b> <code>$21</code> — capteurs fin de course matériels</label>
+      </div>
+      <p class="conn-note" id="limNote">Connecte la machine pour lire les valeurs réelles ($$) puis écrire les nouvelles.</p>
+    </div>
+    <footer class="modal-foot">
+      <div class="foot-group">
+        <button class="btn sm" id="limRead" title="Lire les réglages depuis grblHAL ($$)"><svg class="ic"><use href="#i-down"/></svg> Lire ($$)</button>
+      </div>
+      <span class="grow"></span>
+      <div class="lathe-hint"><code>$130 X · $131 Y · $132 Z · $20 soft · $21 hard</code></div>
+      <button class="btn btn-primary" id="limApply"><svg class="ic"><use href="#i-up"/></svg> Appliquer → grblHAL</button>
     </footer>
   </div>
 </div>
