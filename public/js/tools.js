@@ -104,6 +104,74 @@ export function nextToolId(tools) {
   return tools.reduce((m, t) => Math.max(m, t.id), 0) + 1;
 }
 
+// ---- tool-declaration G-code generator -------------------------------------
+// Emit a self-contained program that DECLARES a tool (specific Ø + length),
+// changes it in, applies the tool-length offset (G43 H) and the diameter cutter
+// compensation (G41/G42 + D word), then cuts a closed rectangle profile so the
+// comp actually engages. Interior vs exterior picks the comp side; the path is
+// generated counter-clockwise so the chosen side is geometrically correct:
+//   Exterior → G42 (tool stays OUTSIDE the profile)
+//   Interior → G41 (tool stays INSIDE the profile)
+// (MSG,…) + (TOOLDEF …) comments are echoed by ioSender so the operator sees the
+// declared diameter / length / side while the job runs.
+export function toolDeclGcode(opts = {}) {
+  const id     = Math.max(1, Math.round(num(opts.id, 1)));
+  const dia    = round3(num(opts.dia, 6));
+  const length = round3(num(opts.length, 0));
+  const side   = opts.side === 'interior' ? 'interior' : 'exterior';
+  const W      = round3(num(opts.width, 70));
+  const H      = round3(num(opts.height, 50));
+  const safeZ  = num(opts.safeZ, 5);
+  const cutZ   = num(opts.cutZ, -1);
+  const feed   = Math.round(num(opts.feed, 600));
+  const plunge = Math.round(num(opts.plunge, 200));
+  const rpm    = Math.round(num(opts.rpm, 12000));
+  const name   = (opts.name || '').trim();
+
+  const r = round3(dia / 2);
+  const G = side === 'exterior' ? 'G42' : 'G41';           // chosen convention
+  const SIDE = side === 'exterior' ? 'EXTERIOR' : 'INTERIOR';
+  const SIDE_FR = side === 'exterior' ? 'exterieur (droite)' : 'interieur (gauche)';
+  const lead = round3(r + 4);                               // amorce offset (≥ rayon)
+
+  // rectangle corners, counter-clockwise
+  const A = [0, 0], B = [W, 0], C = [W, H], D = [0, H];
+  const P = (p) => `X${f3(p[0])} Y${f3(p[1])}`;
+
+  return [
+    '%',
+    `O${String(1000 + id).padStart(4, '0')} (DECLARATION OUTIL T${id}${name ? ' - ' + up(name) : ''})`,
+    `(TOOLDEF T${id} DIA=${f3(dia)} LEN=${f3(length)} SIDE=${SIDE} COMP=${G})`,
+    `(MSG, T${id} O${f3(dia)} L${f3(length)} - ${SIDE} comp ${G})`,
+    'G21 G90 G17 G94 G40 G49',
+    `G10 L1 P${id} Z${f3(-length)} R${f3(r)}   ; declare longueur (Z) + rayon (R) dans la table outils`,
+    `T${id} M6                       ; changement d'outil`,
+    `G43 H${id}                       ; ACTIVE la longueur d'outil (declaration/changement de longueur)`,
+    `S${rpm} M3`,
+    `G0 Z${f3(safeZ)}`,
+    `G0 X${f3(-lead)} Y${f3(-lead)}          ; point d'amorce (hors matiere)`,
+    `G1 Z${f3(cutZ)} F${plunge}`,
+    `${G} D${id} F${feed}                 ; ACTIVE comp de diametre ${dia} mm - ${SIDE_FR}`,
+    `G1 ${P(A)}                    ; amorce sur le profil (la comp s'etablit ici)`,
+    `G1 ${P(B)}`,
+    `G1 ${P(C)}`,
+    `G1 ${P(D)}`,
+    `G1 ${P(A)}                    ; contour ferme (sens trigonometrique / CCW)`,
+    `G40                            ; annule la comp de diametre`,
+    `G1 X${f3(-lead)} Y${f3(-lead)}          ; degagement`,
+    `G0 Z${f3(safeZ)}`,
+    `G49                            ; annule la longueur d'outil`,
+    'M5',
+    'M30',
+    '%',
+    '',
+  ].join('\n');
+}
+
+function round3(v) { return Math.round(num(v) * 1000) / 1000; }
+function f3(v) { return (Math.round(num(v) * 1000) / 1000).toFixed(3); }
+function up(s) { return String(s).toUpperCase().replace(/[()]/g, ''); }
+
 // ---- CSV export / import ("extract the full declared table") ----------------
 // ';' delimiter + '.' decimals so it opens cleanly in French Excel.
 export const CSV_COLS = [
